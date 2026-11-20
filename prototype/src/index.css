@@ -12,6 +12,8 @@
   font-family: "Segoe UI", "Helvetica Neue", sans-serif;
   color: var(--ink);
   background: var(--bg);
+  /* Прототип только в светлой теме: иначе браузер в тёмной теме красит кнопки и поля сам. */
+  color-scheme: light;
 }
 
 * {
@@ -26,8 +28,19 @@ body,
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
+  color: inherit;
+}
+
+/* Поля ввода: явный цвет текста и фона, чтобы не зависеть от темы устройства. */
+input,
+select,
+textarea {
+  color: var(--ink);
+  background-color: white;
 }
 
 .app-shell {
@@ -946,7 +959,7 @@ p {
   background: none;
   font-size: 34px;
   line-height: 1;
-  color: var(--line);
+  color: #8c8170;
   cursor: pointer;
   padding: 0;
 }
