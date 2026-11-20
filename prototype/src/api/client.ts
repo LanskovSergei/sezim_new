@@ -139,6 +139,20 @@ export const api = {
     return takenSlots(store.allBookings(), psychologistId);
   },
 
+  /** Расписание, сохранённое психологом; null — берём из его карточки. */
+  async schedule(psychologistId: string): Promise<boolean[][] | null> {
+    return store.scheduleFor(psychologistId);
+  },
+
+  async saveSchedule(psychologistId: string, grid: boolean[][]): Promise<void> {
+    store.saveSchedule(psychologistId, grid);
+  },
+
+  /** Режим показа: стереть все демо-данные и начать с чистого листа. */
+  async resetDemo(): Promise<void> {
+    store.reset();
+  },
+
   /** Отмена записи: за 24 часа и раньше — полный возврат, позже — без возврата. */
   async cancelBooking(bookingId: string): Promise<Booking> {
     const booking = store.allBookings().find((b) => b.id === bookingId);

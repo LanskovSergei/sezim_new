@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { psychologists } from "../data/psychologists";
+import { Avatar } from "./Avatar";
 import { PAYMENT_LABELS, formatMoney } from "../lib/labels";
 import type { Booking } from "../types";
 
@@ -17,7 +18,7 @@ export function BookingCard({ booking, past = false, children }: Props) {
   return (
     <div className="card static">
       <div className="row" style={{ alignItems: "center", marginBottom: 10 }}>
-        {psy && <img className="avatar" src={psy.photo} alt="" />}
+        <Avatar name={booking.psychologistName} src={psy?.photo} />
         <div className="grow">
           <strong>{booking.psychologistName}</strong>
           {psy && <div className="hint">{psy.method}</div>}

@@ -32,8 +32,11 @@ input {
 
 .app-shell {
   min-height: 100vh;
-  display: grid;
-  place-items: start center;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 24px;
   padding: 24px 16px 48px;
 }
 
@@ -1067,5 +1070,164 @@ p {
   .wave i,
   .dot.wait {
     animation: none;
+  }
+}
+
+/* Каталог */
+
+.chips.scroll-x {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin: 12px -22px 10px;
+  padding: 0 22px 4px;
+  scrollbar-width: thin;
+}
+
+.chips.scroll-x .chip {
+  flex: none;
+}
+
+.seg {
+  display: inline-flex;
+  align-self: flex-start;
+  background: #efeae1;
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 14px;
+}
+
+.seg button {
+  border: 0;
+  background: transparent;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.seg button.on {
+  background: white;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Главная */
+
+.landing h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  margin: 10px 0 12px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.perks {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.perks li {
+  position: relative;
+  padding-left: 22px;
+  font-size: 14px;
+}
+
+.perks li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 9px;
+  height: 5px;
+  border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg);
+}
+
+.link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.therapist-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  background: #efeae1;
+  cursor: pointer;
+}
+
+.therapist-entry:hover {
+  border-color: var(--accent);
+}
+
+/* Панель ведущего */
+
+.demo-panel {
+  order: -1;
+  width: 300px;
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: white;
+  border: 1px solid var(--line);
+}
+
+.demo-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.demo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.demo-actions .btn {
+  width: 100%;
+}
+
+.demo-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+@media (max-width: 820px) {
+  .demo-panel {
+    order: 1;
+    position: static;
+    width: min(420px, 100%);
   }
 }

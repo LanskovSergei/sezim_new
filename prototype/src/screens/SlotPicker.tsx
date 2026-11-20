@@ -8,6 +8,7 @@ import {
   slotAt,
 } from "../lib/availability";
 import { formatMoney } from "../lib/labels";
+import { Avatar } from "../components/Avatar";
 import type { Psychologist, Slot, TimeOfDay } from "../types";
 
 type Props = {
@@ -37,13 +38,16 @@ export function SlotPicker({
   onPick,
 }: Props) {
   const [taken, setTaken] = useState<Set<string> | null>(null);
+  const [schedule, setSchedule] = useState<boolean[][] | null>(null);
   const [dayIndex, setDayIndex] = useState(0);
   const [hour, setHour] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
-    api.takenSlots(psy.id).then((set) => {
-      if (active) setTaken(set);
+    Promise.all([api.takenSlots(psy.id), api.schedule(psy.id)]).then(([set, grid]) => {
+      if (!active) return;
+      setSchedule(grid);
+      setTaken(set);
     });
     return () => {
       active = false;
@@ -54,8 +58,11 @@ export function SlotPicker({
     if (!taken) return [];
     const busy = new Set(taken);
     if (current) busy.add(current);
-    return bookingDays(psy).map((date) => ({ date, hours: freeHours(psy, date, busy) }));
-  }, [psy, taken, current]);
+    return bookingDays(psy).map((date) => ({
+      date,
+      hours: freeHours(psy, date, busy, schedule),
+    }));
+  }, [psy, taken, current, schedule]);
 
   // Открываем первый день, где есть окно в удобное по анкете время.
   useEffect(() => {
@@ -78,7 +85,7 @@ export function SlotPicker({
       </button>
       <h2>{title}</h2>
       <div className="row" style={{ alignItems: "center", marginBottom: 18 }}>
-        <img className="avatar small" src={psy.photo} alt="" />
+        <Avatar name={psy.name} src={psy.photo} size="small" />
         <div className="grow">
           <strong>{psy.name}</strong>
           <div className="hint">

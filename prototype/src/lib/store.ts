@@ -14,6 +14,8 @@ type Db = {
   bookings: Booking[];
   messages: ChatMessage[];
   quizByUser: Record<string, Quiz>;
+  /** Недельное расписание психолога: 7 дней (с пн) × часы с 8 до 21. */
+  schedules: Record<string, boolean[][]>;
   lastQuiz: Quiz | null;
   sessionUserId: string | null;
 };
@@ -23,11 +25,16 @@ const empty: Db = {
   bookings: [],
   messages: [],
   quizByUser: {},
+  schedules: {},
   lastQuiz: null,
   sessionUserId: null,
 };
 
+/** Запасной вариант, если браузер не даёт localStorage (приватный режим, превью). */
+let memory: Db | null = null;
+
 function read(): Db {
+  if (memory) return memory;
   try {
     const raw = localStorage.getItem(KEY);
     return raw ? { ...empty, ...JSON.parse(raw) } : { ...empty };
@@ -37,10 +44,31 @@ function read(): Db {
 }
 
 function write(db: Db) {
-  localStorage.setItem(KEY, JSON.stringify(db));
+  memory = db;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(db));
+  } catch {
+    // Хранилище недоступно: данные живут в памяти до перезагрузки.
+  }
 }
 
 export const store = {
+  /** Стереть все демо-данные: записи, чаты, анкеты, аккаунты. */
+  reset() {
+    memory = null;
+    try {
+      localStorage.removeItem(KEY);
+    } catch {
+      // нечего удалять
+    }
+  },
+  scheduleFor(psychologistId: string): boolean[][] | null {
+    return read().schedules[psychologistId] ?? null;
+  },
+  saveSchedule(psychologistId: string, grid: boolean[][]) {
+    const db = read();
+    write({ ...db, schedules: { ...db.schedules, [psychologistId]: grid } });
+  },
   getQuiz(): Quiz | null {
     return read().lastQuiz;
   },
