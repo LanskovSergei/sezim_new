@@ -23,7 +23,7 @@ export const PROVIDERS: {
   { id: "google", label: "Google", mark: "G", color: "#4285f4" },
   { id: "apple", label: "Apple", mark: "A", color: "#111111" },
   { id: "telegram", label: "Telegram", mark: "T", color: "#229ed9" },
-  { id: "whatsapp", label: "WhatsApp", mark: "W", color: "#25d366" },
+  { id: "whatsapp", label: "WhatsApp", mark: "W", color: "#25d366", darkMark: true },
   { id: "yandex", label: "Яндекс ID", mark: "Я", color: "#fc3f1d" },
   { id: "vk", label: "VK ID", mark: "VK", color: "#0077ff" },
   { id: "tid", label: "T-ID", mark: "Т", color: "#ffdd2d", darkMark: true },
