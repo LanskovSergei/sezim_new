@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { api } from "./api/client";
+import { FREE_CANCEL_HOURS, api, hoursUntil } from "./api/client";
 import { BookingCard } from "./components/BookingCard";
+import { ChatThread } from "./components/ChatThread";
 import { psychologists } from "./data/psychologists";
 import {
   PAYMENT_LABELS,
@@ -32,6 +33,12 @@ type Props = {
   onEditQuiz: () => void;
   onUserChange: (user: User) => void;
   onLogout: () => void;
+  /** Сообщение после действия, например «Сессия перенесена». */
+  notice?: string;
+  onDismissNotice: () => void;
+  onCancel: (booking: Booking) => Promise<void>;
+  onReschedule: (booking: Booking) => void;
+  onEnterRoom: (booking: Booking) => void;
 };
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
@@ -80,6 +87,11 @@ export function Cabinet({
   onEditQuiz,
   onUserChange,
   onLogout,
+  notice,
+  onDismissNotice,
+  onCancel,
+  onReschedule,
+  onEnterRoom,
 }: Props) {
   const [tab, setTab] = useState<Tab>("sessions");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -142,8 +154,13 @@ export function Cabinet({
     return (
       <div className="cabinet">
         <ChatThread
-          dialog={open}
-          typing={typing.includes(open.id)}
+          title={open.name}
+          subtitle={open.psy?.method}
+          avatar={open.psy?.photo}
+          thread={open.thread}
+          self="client"
+          typingLabel={typing.includes(open.id) ? `${open.name} печатает…` : undefined}
+          emptyText="Здесь можно задать вопрос психологу до сессии или между встречами."
           onBack={() => setOpenId(null)}
           onSend={(text) => send(open.id, text)}
         />
@@ -158,8 +175,13 @@ export function Cabinet({
           <SessionsTab
             user={user}
             bookings={bookings}
+            notice={notice}
+            onDismissNotice={onDismissNotice}
             onChat={openChat}
             onFindPsychologist={onFindPsychologist}
+            onCancel={onCancel}
+            onReschedule={onReschedule}
+            onEnterRoom={onEnterRoom}
           />
         )}
         {tab === "chats" && (
@@ -212,20 +234,34 @@ export function Cabinet({
 function SessionsTab({
   user,
   bookings,
+  notice,
+  onDismissNotice,
   onChat,
   onFindPsychologist,
+  onCancel,
+  onReschedule,
+  onEnterRoom,
 }: {
   user: User;
   bookings: Booking[];
+  notice?: string;
+  onDismissNotice: () => void;
   onChat: (psychologistId: string) => void;
   onFindPsychologist: () => void;
+  onCancel: (booking: Booking) => Promise<void>;
+  onReschedule: (booking: Booking) => void;
+  onEnterRoom: (booking: Booking) => void;
 }) {
-  const { upcoming, past } = useMemo(() => {
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  const { upcoming, past, cancelled } = useMemo(() => {
     const now = Date.now();
     const time = (b: Booking) => new Date(b.startsAt).getTime();
+    const paid = bookings.filter((b) => b.status === "paid");
     return {
-      upcoming: bookings.filter((b) => time(b) >= now).sort((a, b) => time(a) - time(b)),
-      past: bookings.filter((b) => time(b) < now).sort((a, b) => time(b) - time(a)),
+      upcoming: paid.filter((b) => time(b) >= now).sort((a, b) => time(a) - time(b)),
+      past: paid.filter((b) => time(b) < now).sort((a, b) => time(b) - time(a)),
+      cancelled: bookings.filter((b) => b.status === "cancelled"),
     };
   }, [bookings]);
 
@@ -236,20 +272,73 @@ function SessionsTab({
         {user.name ? `${user.name} · ${userLabel(user)}` : userLabel(user)}
       </p>
 
+      {notice && (
+        <div className="notice">
+          <span className="grow">{notice}</span>
+          <button className="chat-back" onClick={onDismissNotice} aria-label="Скрыть">
+            ×
+          </button>
+        </div>
+      )}
+
       <div className="queue-title">Ближайшие</div>
       {upcoming.length === 0 && (
         <p>Пока нет записей. Подберите специалиста по анкете.</p>
       )}
-      {upcoming.map((booking) => (
-        <BookingCard key={booking.id} booking={booking}>
-          <button
-            className="btn secondary small"
-            onClick={() => onChat(booking.psychologistId)}
-          >
-            Написать психологу
-          </button>
-        </BookingCard>
-      ))}
+      {upcoming.map((booking) => {
+        const free = hoursUntil(booking) >= FREE_CANCEL_HOURS;
+        return (
+          <BookingCard key={booking.id} booking={booking}>
+            {confirmId === booking.id ? (
+              <div className="confirm">
+                <strong>Отменить сессию?</strong>
+                <span className="hint">
+                  {free
+                    ? `До начала больше 24 часов: вернём ${formatMoney(booking.amount)} на карту.`
+                    : "До начала меньше 24 часов: по условиям оплата не возвращается."}
+                </span>
+                <div className="row">
+                  <button
+                    className="btn small"
+                    onClick={async () => {
+                      await onCancel(booking);
+                      setConfirmId(null);
+                    }}
+                  >
+                    Отменить запись
+                  </button>
+                  <button className="btn secondary small" onClick={() => setConfirmId(null)}>
+                    Оставить
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button className="btn small" onClick={() => onEnterRoom(booking)}>
+                  Войти в комнату
+                </button>
+                <button
+                  className="btn secondary small"
+                  disabled={!free}
+                  title={free ? undefined : "Перенос возможен не позже чем за 24 часа"}
+                  onClick={() => onReschedule(booking)}
+                >
+                  Перенести
+                </button>
+                <button className="btn secondary small" onClick={() => setConfirmId(booking.id)}>
+                  Отменить
+                </button>
+                <button
+                  className="btn secondary small"
+                  onClick={() => onChat(booking.psychologistId)}
+                >
+                  Чат
+                </button>
+              </>
+            )}
+          </BookingCard>
+        );
+      })}
 
       <div className="queue-title">Прошедшие</div>
       {past.length === 0 && <p>Здесь появятся завершённые сессии.</p>}
@@ -263,6 +352,15 @@ function SessionsTab({
           </button>
         </BookingCard>
       ))}
+
+      {cancelled.length > 0 && (
+        <>
+          <div className="queue-title">Отменённые</div>
+          {cancelled.map((booking) => (
+            <BookingCard key={booking.id} booking={booking} />
+          ))}
+        </>
+      )}
 
       <button className="btn mt-auto" onClick={onFindPsychologist}>
         Подобрать психолога
@@ -313,76 +411,9 @@ function ChatsTab({
   );
 }
 
-function ChatThread({
-  dialog,
-  typing,
-  onBack,
-  onSend,
-}: {
-  dialog: Dialog;
-  typing: boolean;
-  onBack: () => void;
-  onSend: (text: string) => void;
-}) {
-  const [draft, setDraft] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const list = listRef.current;
-    if (list) list.scrollTop = list.scrollHeight;
-  }, [dialog.thread.length, typing]);
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text) return;
-    setDraft("");
-    onSend(text);
-  }
-
-  return (
-    <>
-      <div className="chat-head">
-        <button className="chat-back" onClick={onBack} aria-label="Назад к чатам">
-          ←
-        </button>
-        {dialog.psy && <img className="avatar small" src={dialog.psy.photo} alt="" />}
-        <div className="grow">
-          <strong>{dialog.name}</strong>
-          {dialog.psy && <div className="hint">{dialog.psy.method}</div>}
-        </div>
-      </div>
-      <div className="chat-messages" ref={listRef}>
-        {dialog.thread.length === 0 && (
-          <p className="hint chat-empty">
-            Здесь можно задать вопрос психологу до сессии или между встречами.
-          </p>
-        )}
-        {dialog.thread.map((message) => (
-          <div key={message.id} className={`msg ${message.from}`}>
-            <div className="bubble">{message.text}</div>
-            <span className="msg-time">{formatTime(message.createdAt)}</span>
-          </div>
-        ))}
-        {typing && <div className="hint">{dialog.name} печатает…</div>}
-      </div>
-      <form className="composer" onSubmit={submit}>
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Сообщение"
-          aria-label="Сообщение"
-        />
-        <button className="btn small" disabled={!draft.trim()}>
-          Отправить
-        </button>
-      </form>
-    </>
-  );
-}
-
 function PaymentsTab({ bookings }: { bookings: Booking[] }) {
-  const total = bookings.reduce((sum, b) => sum + b.amount, 0);
+  const total = bookings.reduce((sum, b) => sum + b.amount - (b.refund ?? 0), 0);
+  const paidCount = bookings.filter((b) => b.status === "paid").length;
   const payments = [...bookings].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   return (
@@ -391,7 +422,7 @@ function PaymentsTab({ bookings }: { bookings: Booking[] }) {
       <div className="card static">
         <div className="hint">Оплачено всего</div>
         <div className="total">{formatMoney(total)}</div>
-        <div className="hint">Сессий оплачено: {bookings.length}</div>
+        <div className="hint">Сессий оплачено: {paidCount}</div>
       </div>
 
       <div className="queue-title">История</div>
@@ -407,7 +438,11 @@ function PaymentsTab({ bookings }: { bookings: Booking[] }) {
               {formatDay(booking.createdAt)}, {formatTime(booking.createdAt)} ·{" "}
               {PAYMENT_LABELS[booking.method]}
             </span>
-            <span className="badge end paid">Оплачено</span>
+            {booking.refund ? (
+              <span className="badge end">Возврат {formatMoney(booking.refund)}</span>
+            ) : (
+              <span className="badge end paid">Оплачено</span>
+            )}
           </div>
         </div>
       ))}

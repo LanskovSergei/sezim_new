@@ -84,6 +84,24 @@ export const store = {
   bookingsFor(userId: string): Booking[] {
     return read().bookings.filter((b) => b.userId === userId);
   },
+  /** Записи всех клиентов: нужны, чтобы не продать одно окно дважды. */
+  allBookings(): Booking[] {
+    return read().bookings;
+  },
+  updateBooking(bookingId: string, patch: Partial<Booking>): Booking {
+    const db = read();
+    const current = db.bookings.find((b) => b.id === bookingId);
+    if (!current) throw new Error("Запись не найдена");
+    const next = { ...current, ...patch };
+    write({ ...db, bookings: db.bookings.map((b) => (b.id === bookingId ? next : b)) });
+    return next;
+  },
+  users(): User[] {
+    return read().users;
+  },
+  messagesForPsychologist(psychologistId: string): ChatMessage[] {
+    return read().messages.filter((m) => m.psychologistId === psychologistId);
+  },
   addMessage(message: ChatMessage) {
     const db = read();
     write({ ...db, messages: [...db.messages, message] });

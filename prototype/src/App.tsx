@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Cabinet } from "./Cabinet";
+import { PsychologistCabinet } from "./PsychologistCabinet";
+import { SlotPicker } from "./screens/SlotPicker";
+import { VideoRoom } from "./screens/VideoRoom";
 import { BookingCard } from "./components/BookingCard";
-import { TOPICS } from "./data/psychologists";
+import { TOPICS, psychologists } from "./data/psychologists";
 import { api } from "./api/client";
-import { PAYMENT_LABELS, PROVIDERS } from "./lib/labels";
+import { PAYMENT_LABELS, PROVIDERS, formatMoney } from "./lib/labels";
 import type { ExternalProvider } from "./lib/labels";
 import { nearestSlot } from "./lib/slot";
 import type {
@@ -15,6 +18,7 @@ import type {
   Language,
   MatchResult,
   PaymentMethod,
+  Psychologist,
   Quiz,
   Slot,
   TimeOfDay,
@@ -29,9 +33,20 @@ type Step =
   | "auth"
   | "otp"
   | "matches"
+  | "slot"
   | "checkout"
   | "paid"
-  | "cabinet";
+  | "cabinet"
+  | "reschedule"
+  | "video"
+  | "therapist";
+
+/** Кто и с кем входит в видеокомнату. */
+type Room = {
+  booking: Booking;
+  role: "client" | "psychologist";
+  peerName: string;
+};
 
 const FIRST_SESSION_DISCOUNT = 500;
 
@@ -63,6 +78,26 @@ export default function App() {
   const [savedQuiz, setSavedQuiz] = useState<Quiz | null>(null);
   /** Пользователь ушёл в анкету или подборку из кабинета — показываем путь назад. */
   const [fromCabinet, setFromCabinet] = useState(false);
+  /** Ближайшее свободное окно каждого психолога из подборки. */
+  const [nearest, setNearest] = useState<Record<string, Slot | null>>({});
+  const [slotError, setSlotError] = useState("");
+  const [rescheduling, setRescheduling] = useState<Booking | null>(null);
+  const [notice, setNotice] = useState("");
+  const [room, setRoom] = useState<Room | null>(null);
+  const [therapist, setTherapist] = useState<Psychologist | null>(null);
+
+  useEffect(() => {
+    if (step !== "matches") return;
+    let active = true;
+    Promise.all(
+      matches.map(async (psy) => [psy.id, nearestSlot(psy, quiz, await api.takenSlots(psy.id))] as const),
+    ).then((pairs) => {
+      if (active) setNearest(Object.fromEntries(pairs));
+    });
+    return () => {
+      active = false;
+    };
+  }, [step, matches, quiz]);
 
   const fromQuiz = matches.length > 0;
   const discount = bookings.length === 0 ? FIRST_SESSION_DISCOUNT : 0;
@@ -137,7 +172,9 @@ export default function App() {
 
   async function pay() {
     if (!selected || !slot || !user) return;
-    const booking = await api.checkout({
+    let booking: Booking;
+    try {
+      booking = await api.checkout({
       userId: user.id,
       psychologistId: selected.id,
       psychologistName: selected.name,
@@ -146,9 +183,60 @@ export default function App() {
       amount: selected.price - discount,
       method,
     });
+    } catch (e) {
+      setSlotError(e instanceof Error ? e.message : "Не удалось оплатить");
+      setStep("slot");
+      return;
+    }
     setBookings(await api.bookings(user.id));
     setPaidBooking(booking);
     setStep("paid");
+  }
+
+  async function cancelBooking(booking: Booking) {
+    if (!user) return;
+    const result = await api.cancelBooking(booking.id);
+    setBookings(await api.bookings(user.id));
+    setNotice(
+      result.refund
+        ? `Запись отменена. ${formatMoney(result.refund)} вернутся на карту в течение 3 дней.`
+        : "Запись отменена без возврата: до начала было меньше 24 часов.",
+    );
+  }
+
+  async function confirmReschedule(next: Slot) {
+    if (!user || !rescheduling) return;
+    try {
+      await api.reschedule(rescheduling.id, next);
+    } catch (e) {
+      setSlotError(e instanceof Error ? e.message : "Не удалось перенести");
+      return;
+    }
+    setBookings(await api.bookings(user.id));
+    setRescheduling(null);
+    setNotice(`Сессия перенесена на ${next.label}. Психолог получит уведомление.`);
+    openCabinet();
+  }
+
+  async function enterTherapist() {
+    setTherapist(await api.loginAsPsychologist());
+    setStep("therapist");
+  }
+
+  function exitRoom() {
+    const role = room?.role;
+    setRoom(null);
+    if (role === "psychologist") setStep("therapist");
+    else openCabinet();
+  }
+
+  async function rate(rating: number) {
+    if (room && user && room.role === "client") {
+      await api.rateBooking(room.booking.id, rating);
+      setBookings(await api.bookings(user.id));
+      setNotice("Спасибо за оценку! Она помогает подбирать специалистов точнее.");
+    }
+    exitRoom();
   }
 
   async function logout() {
@@ -163,12 +251,14 @@ export default function App() {
     setSavedQuiz(null);
     setFromCabinet(false);
     setPhone("");
+    setNotice("");
+    setTherapist(null);
     setStep("landing");
   }
 
   return (
     <div className="app-shell">
-      <div className={`phone ${step === "cabinet" ? "fit" : ""}`}>
+      <div className={`phone ${["cabinet", "therapist", "video"].includes(step) ? "fit" : ""}`}>
         {step === "landing" && (
           <div className="screen">
             <p className="hint">Прототип психологи · данные в localStorage</p>
@@ -187,6 +277,9 @@ export default function App() {
               onClick={() => setStep("auth")}
             >
               Уже есть аккаунт
+            </button>
+            <button className="btn ghost mt-auto" onClick={enterTherapist}>
+              Я психолог — открыть кабинет специалиста
             </button>
           </div>
         )}
@@ -509,6 +602,13 @@ export default function App() {
                       </div>
                     </div>
                     {psy.queue > 1 && <div className="warn">{psy.reason}</div>}
+                    {psy.id in nearest && (
+                      <div className="hint" style={{ marginBottom: 8 }}>
+                        {nearest[psy.id]
+                          ? `Ближайшее окно: ${nearest[psy.id]!.label}`
+                          : "Свободных окон в ближайшие недели нет"}
+                      </div>
+                    )}
                     {psy.topics.slice(0, 3).map((t) => (
                       <span key={t} className="badge">
                         {t}
@@ -521,8 +621,9 @@ export default function App() {
                         style={{ width: "auto", padding: "8px 14px" }}
                         onClick={() => {
                           setSelected(psy);
-                          setSlot(nearestSlot(psy, quiz));
-                          setStep("checkout");
+                          setSlot(null);
+                          setSlotError("");
+                          setStep("slot");
                         }}
                       >
                         Выбрать время
@@ -535,10 +636,64 @@ export default function App() {
           </div>
         )}
 
+        {step === "slot" && selected && (
+          <SlotPicker
+            psy={selected}
+            preferred={quiz.times}
+            title="Выберите дату и время"
+            actionLabel="Перейти к оплате"
+            error={slotError}
+            onBack={() => setStep("matches")}
+            onPick={(next) => {
+              setSlot(next);
+              setSlotError("");
+              setStep("checkout");
+            }}
+          />
+        )}
+
+        {step === "reschedule" && rescheduling && (
+          <SlotPicker
+            psy={psychologists.find((p) => p.id === rescheduling.psychologistId)!}
+            preferred={quiz.times}
+            title="Перенос сессии"
+            actionLabel="Перенести сюда"
+            current={rescheduling.startsAt}
+            error={slotError}
+            onBack={() => {
+              setRescheduling(null);
+              openCabinet();
+            }}
+            onPick={confirmReschedule}
+          />
+        )}
+
+        {step === "video" && room && (
+          <VideoRoom
+            booking={room.booking}
+            psy={psychologists.find((p) => p.id === room.booking.psychologistId)}
+            role={room.role}
+            peerName={room.peerName}
+            onExit={exitRoom}
+            onRate={rate}
+          />
+        )}
+
+        {step === "therapist" && therapist && (
+          <PsychologistCabinet
+            psy={therapist}
+            onLogout={logout}
+            onEnterRoom={(booking, peerName) => {
+              setRoom({ booking, role: "psychologist", peerName });
+              setStep("video");
+            }}
+          />
+        )}
+
         {step === "checkout" && selected && slot && (
           <div className="screen">
-            <button className="back" onClick={() => setStep("matches")}>
-              ← Назад
+            <button className="back" onClick={() => setStep("slot")}>
+              ← Изменить время
             </button>
             <h2>Оформление сессии</h2>
             <p>
@@ -603,6 +758,18 @@ export default function App() {
             }}
             onUserChange={setUser}
             onLogout={logout}
+            notice={notice}
+            onDismissNotice={() => setNotice("")}
+            onCancel={cancelBooking}
+            onReschedule={(booking) => {
+              setRescheduling(booking);
+              setSlotError("");
+              setStep("reschedule");
+            }}
+            onEnterRoom={(booking) => {
+              setRoom({ booking, role: "client", peerName: booking.psychologistName });
+              setStep("video");
+            }}
           />
         )}
       </div>
