@@ -1,3 +1,5 @@
+import { psychologists } from "../data/psychologists";
+import { takenSlots } from "../lib/availability";
 import { matchPsychologists } from "../lib/match";
 import { store } from "../lib/store";
 import type {
@@ -7,7 +9,9 @@ import type {
   MatchResult,
   PaymentMethod,
   ProfilePatch,
+  Psychologist,
   Quiz,
+  Slot,
   User,
 } from "../types";
 
@@ -20,6 +24,16 @@ const AUTO_REPLIES = [
   "Хорошо, обсудим это на сессии. Если что-то изменится — пишите.",
 ];
 const AUTO_REPLY_DELAY_MS = 1200;
+
+/** Бесплатная отмена и перенос — если до сессии не меньше 24 часов. */
+export const FREE_CANCEL_HOURS = 24;
+
+export function hoursUntil(booking: Booking, now = new Date()): number {
+  return (new Date(booking.startsAt).getTime() - now.getTime()) / 3_600_000;
+}
+
+/** Демо-аккаунт психолога: в прототипе в кабинет психолога входит Анна. */
+export const DEMO_PSYCHOLOGIST_ID = "anna";
 
 function newMessage(
   userId: string,
@@ -93,6 +107,9 @@ export const api = {
     amount: number;
     method: PaymentMethod;
   }): Promise<Booking> {
+    if (takenSlots(store.allBookings(), input.psychologistId).has(input.startsAt)) {
+      throw new Error("Это время уже заняли, выберите другое");
+    }
     const booking: Booking = {
       id: crypto.randomUUID(),
       ...input,
@@ -115,6 +132,70 @@ export const api = {
       );
     }
     return booking;
+  },
+
+  /** Занятые окна психолога по всем клиентам. */
+  async takenSlots(psychologistId: string): Promise<Set<string>> {
+    return takenSlots(store.allBookings(), psychologistId);
+  },
+
+  /** Отмена записи: за 24 часа и раньше — полный возврат, позже — без возврата. */
+  async cancelBooking(bookingId: string): Promise<Booking> {
+    const booking = store.allBookings().find((b) => b.id === bookingId);
+    if (!booking) throw new Error("Запись не найдена");
+    const refund = hoursUntil(booking) >= FREE_CANCEL_HOURS ? booking.amount : 0;
+    return store.updateBooking(bookingId, { status: "cancelled", refund });
+  },
+
+  /** Перенос к тому же психологу; окно проверяется на занятость. */
+  async reschedule(bookingId: string, slot: Slot): Promise<Booking> {
+    const booking = store.allBookings().find((b) => b.id === bookingId);
+    if (!booking) throw new Error("Запись не найдена");
+    if (hoursUntil(booking) < FREE_CANCEL_HOURS) {
+      throw new Error("Перенести можно не позже чем за 24 часа до начала");
+    }
+    if (takenSlots(store.allBookings(), booking.psychologistId).has(slot.startsAt)) {
+      throw new Error("Это время уже заняли, выберите другое");
+    }
+    return store.updateBooking(bookingId, { startsAt: slot.startsAt, slotLabel: slot.label });
+  },
+
+  async rateBooking(bookingId: string, rating: number): Promise<Booking> {
+    return store.updateBooking(bookingId, { rating });
+  },
+
+  /** Заглушка входа психолога: сразу открывает кабинет демо-специалиста. */
+  async loginAsPsychologist(): Promise<Psychologist> {
+    const psy = psychologists.find((p) => p.id === DEMO_PSYCHOLOGIST_ID);
+    if (!psy) throw new Error("Демо-психолог не найден");
+    return psy;
+  },
+
+  /** Оплаченные записи к психологу от всех клиентов. */
+  async psychologistBookings(psychologistId: string): Promise<Booking[]> {
+    return store
+      .allBookings()
+      .filter((b) => b.psychologistId === psychologistId && b.status === "paid");
+  },
+
+  async psychologistMessages(psychologistId: string): Promise<ChatMessage[]> {
+    return store.messagesForPsychologist(psychologistId);
+  },
+
+  /** Ответ психолога клиенту: клиент увидит его в своём кабинете. */
+  async replyAsPsychologist(
+    userId: string,
+    psychologistId: string,
+    text: string,
+  ): Promise<ChatMessage> {
+    const message = newMessage(userId, psychologistId, "psychologist", text);
+    store.addMessage(message);
+    return message;
+  },
+
+  /** Как показывать клиента психологу: имя из профиля или способ входа. */
+  async clients(): Promise<User[]> {
+    return store.users();
   },
 
   async messages(userId: string): Promise<ChatMessage[]> {

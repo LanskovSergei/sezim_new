@@ -86,6 +86,10 @@ export type Booking = {
   startsAt: string;
   amount: number;
   method: PaymentMethod;
-  status: "paid";
+  /** cancelled — отменена клиентом; refund показывает, сколько вернули. */
+  status: "paid" | "cancelled";
   createdAt: string;
+  refund?: number;
+  /** Оценка после сессии, 1–5. */
+  rating?: number;
 };
