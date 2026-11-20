@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Cabinet } from "./Cabinet";
 import { PsychologistCabinet } from "./PsychologistCabinet";
+import { DemoPanel } from "./components/DemoPanel";
+import { Catalog } from "./screens/Catalog";
 import { SlotPicker } from "./screens/SlotPicker";
 import { VideoRoom } from "./screens/VideoRoom";
+import { Avatar } from "./components/Avatar";
 import { BookingCard } from "./components/BookingCard";
 import { TOPICS, psychologists } from "./data/psychologists";
 import { api } from "./api/client";
@@ -33,6 +36,7 @@ type Step =
   | "auth"
   | "otp"
   | "matches"
+  | "catalog"
   | "slot"
   | "checkout"
   | "paid"
@@ -49,6 +53,7 @@ type Room = {
 };
 
 const FIRST_SESSION_DISCOUNT = 500;
+const DEMO_PHONE = "9001234567";
 
 const emptyQuiz: Quiz = {
   format: "individual",
@@ -69,7 +74,7 @@ export default function App() {
   const [otpHint, setOtpHint] = useState("1111");
   const [error, setError] = useState("");
   const [matches, setMatches] = useState<MatchResult[]>([]);
-  const [selected, setSelected] = useState<MatchResult | null>(null);
+  const [selected, setSelected] = useState<Psychologist | null>(null);
   const [slot, setSlot] = useState<Slot | null>(null);
   const [method, setMethod] = useState<PaymentMethod>("rf_card");
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -85,12 +90,19 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [room, setRoom] = useState<Room | null>(null);
   const [therapist, setTherapist] = useState<Psychologist | null>(null);
+  /** Откуда пришли в каталог и к выбору времени — туда же ведёт «Назад». */
+  const [catalogBack, setCatalogBack] = useState<"landing" | "matches">("landing");
+  const [slotBack, setSlotBack] = useState<"matches" | "catalog">("matches");
+  const [paying, setPaying] = useState(false);
 
   useEffect(() => {
     if (step !== "matches") return;
     let active = true;
     Promise.all(
-      matches.map(async (psy) => [psy.id, nearestSlot(psy, quiz, await api.takenSlots(psy.id))] as const),
+      matches.map(async (psy) => {
+        const [taken, schedule] = await Promise.all([api.takenSlots(psy.id), api.schedule(psy.id)]);
+        return [psy.id, nearestSlot(psy, quiz, taken, schedule)] as const;
+      }),
     ).then((pairs) => {
       if (active) setNearest(Object.fromEntries(pairs));
     });
@@ -135,7 +147,8 @@ export default function App() {
         setSavedQuiz(saved);
       }
     }
-    setStep(fromQuiz ? "matches" : "cabinet");
+    if (selected && slot) setStep("checkout");
+    else setStep(fromQuiz ? "matches" : "cabinet");
   }
 
   function openCabinet() {
@@ -171,7 +184,15 @@ export default function App() {
   }
 
   async function pay() {
-    if (!selected || !slot || !user) return;
+    if (!selected || !slot) return;
+    if (!user) {
+      setStep("auth");
+      return;
+    }
+    setPaying(true);
+    // Имитация ответа платёжной системы.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    setPaying(false);
     let booking: Booking;
     try {
       booking = await api.checkout({
@@ -239,8 +260,7 @@ export default function App() {
     exitRoom();
   }
 
-  async function logout() {
-    await api.logout();
+  function clearSession() {
     setUser(null);
     setQuiz(emptyQuiz);
     setMatches([]);
@@ -253,35 +273,114 @@ export default function App() {
     setPhone("");
     setNotice("");
     setTherapist(null);
+    setRoom(null);
+    setRescheduling(null);
     setStep("landing");
+  }
+
+  async function logout() {
+    await api.logout();
+    clearSession();
+  }
+
+  /** Режим показа: всё стереть и вернуться на главную. */
+  async function resetDemo() {
+    await api.resetDemo();
+    clearSession();
+  }
+
+  /** Режим показа: войти клиентом с заполненной анкетой и сразу открыть подборку. */
+  async function demoClient() {
+    const demoQuiz: Quiz = { ...emptyQuiz, topics: ["Тревога и страхи", "Апатия и выгорание"] };
+    const list = await api.match(demoQuiz);
+    await api.requestCode(DEMO_PHONE);
+    const next = await api.verify(DEMO_PHONE, "1111");
+    await api.saveQuiz(next.id, demoQuiz);
+    setQuiz(demoQuiz);
+    setSavedQuiz(demoQuiz);
+    setMatches(list);
+    setUser(next);
+    setPhone(DEMO_PHONE);
+    setBookings(await api.bookings(next.id));
+    setTherapist(null);
+    setRoom(null);
+    setFromCabinet(false);
+    setStep("matches");
+  }
+
+  async function demoTherapist() {
+    await api.logout();
+    clearSession();
+    await enterTherapist();
   }
 
   return (
     <div className="app-shell">
+      <DemoPanel
+        where={
+          step === "therapist" || (step === "video" && room?.role === "psychologist")
+            ? "Психолог"
+            : user
+              ? "Клиент"
+              : "Гость"
+        }
+        onReset={resetDemo}
+        onClient={demoClient}
+        onTherapist={demoTherapist}
+      />
       <div className={`phone ${["cabinet", "therapist", "video"].includes(step) ? "fit" : ""}`}>
         {step === "landing" && (
-          <div className="screen">
-            <p className="hint">Прототип психологи · данные в localStorage</p>
-            <h1>Личный кабинет как центр</h1>
+          <div className="screen landing">
+            <span className="eyebrow">Онлайн-психологи · RU · KZ · TR</span>
+            <h1>Психолог, который свободен, когда удобно вам</h1>
             <p>
-              Сначала анкета, потом вход любым удобным способом, затем подборка
-              психологов и оплата. Бронь появляется в личном кабинете. Код
-              подтверждения в прототипе: 1111.
+              Ответьте на 3 вопроса — покажем специалистов, которые подходят по запросу и
+              свободны в удобное вам время. Сессии по видео прямо на сайте.
             </p>
+            <ul className="perks">
+              <li>{psychologists.length} специалистов с проверенными дипломами</li>
+              <li>
+                Сессия от {formatMoney(Math.min(...psychologists.map((p) => p.price)))}, первая —
+                со скидкой {formatMoney(FIRST_SESSION_DISCOUNT)}
+              </li>
+              <li>Перенос и отмена бесплатно за 24 часа</li>
+            </ul>
             <button className="btn" onClick={() => setStep("quiz1")}>
               Подобрать психолога
             </button>
             <button
               className="btn secondary"
               style={{ marginTop: 10 }}
-              onClick={() => setStep("auth")}
+              onClick={() => {
+                setCatalogBack("landing");
+                setStep("catalog");
+              }}
             >
-              Уже есть аккаунт
+              Смотреть всех специалистов
             </button>
-            <button className="btn ghost mt-auto" onClick={enterTherapist}>
-              Я психолог — открыть кабинет специалиста
+            <button className="link-btn" style={{ marginTop: 14 }} onClick={() => setStep("auth")}>
+              Уже есть аккаунт — войти
+            </button>
+            <button className="therapist-entry mt-auto" onClick={enterTherapist}>
+              <strong>Я психолог</strong>
+              <span className="hint">Кабинет специалиста: расписание, клиенты, выплаты</span>
             </button>
           </div>
+        )}
+
+        {step === "catalog" && (
+          <Catalog
+            quiz={quiz}
+            backLabel={catalogBack === "matches" ? "К подборке" : "На главную"}
+            onBack={() => setStep(catalogBack)}
+            onPick={(psy) => {
+              setSelected(psy);
+              setSlot(null);
+              setSlotError("");
+              setSlotBack("catalog");
+              setStep("slot");
+            }}
+          />
         )}
 
         {step === "quiz1" && (
@@ -485,12 +584,18 @@ export default function App() {
               className="back"
               onClick={() => {
                 setError("");
-                setStep(fromQuiz ? "quiz3" : "landing");
+                setStep(selected && slot ? "checkout" : fromQuiz ? "quiz3" : "landing");
               }}
             >
               ← Назад
             </button>
-            <h2>{fromQuiz ? "Сохраните подборку" : "Вход в личный кабинет"}</h2>
+            <h2>
+              {selected && slot
+                ? "Войдите, чтобы оплатить"
+                : fromQuiz
+                  ? "Сохраните подборку"
+                  : "Вход в личный кабинет"}
+            </h2>
             <p>
               {fromQuiz
                 ? `Мы нашли ${matches.length} специалистов. Войдите любым способом, чтобы увидеть подборку.`
@@ -581,6 +686,16 @@ export default function App() {
                 </p>
               </div>
             </div>
+            <button
+              className="link-btn"
+              style={{ alignSelf: "flex-start", marginBottom: 4 }}
+              onClick={() => {
+                setCatalogBack("matches");
+                setStep("catalog");
+              }}
+            >
+              Смотреть всех специалистов →
+            </button>
             {grouped.map(([queue, list]) => (
               <div key={queue}>
                 <div className="queue-title">
@@ -593,7 +708,7 @@ export default function App() {
                 {list.map((psy) => (
                   <div key={psy.id} className="card">
                     <div className="row" style={{ alignItems: "center", marginBottom: 10 }}>
-                      <img className="avatar" src={psy.photo} alt="" />
+                      <Avatar name={psy.name} src={psy.photo} />
                       <div className="grow">
                         <strong>{psy.name}</strong>
                         <div className="hint">
@@ -623,6 +738,7 @@ export default function App() {
                           setSelected(psy);
                           setSlot(null);
                           setSlotError("");
+                          setSlotBack("matches");
                           setStep("slot");
                         }}
                       >
@@ -643,7 +759,7 @@ export default function App() {
             title="Выберите дату и время"
             actionLabel="Перейти к оплате"
             error={slotError}
-            onBack={() => setStep("matches")}
+            onBack={() => setStep(slotBack)}
             onPick={(next) => {
               setSlot(next);
               setSlotError("");
@@ -726,8 +842,12 @@ export default function App() {
                 <strong>{(selected.price - discount).toLocaleString("ru-RU")} ₽</strong>
               </div>
             </div>
-            <button className="btn mt-auto" onClick={pay}>
-              Оплатить
+            <button className="btn mt-auto" onClick={pay} disabled={paying}>
+              {paying
+                ? "Ждём подтверждения банка…"
+                : user
+                  ? `Оплатить ${formatMoney(selected.price - discount)}`
+                  : "Войти и оплатить"}
             </button>
           </div>
         )}

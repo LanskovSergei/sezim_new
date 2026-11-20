@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { FREE_CANCEL_HOURS, api, hoursUntil } from "./api/client";
 import { BookingCard } from "./components/BookingCard";
+import { Avatar } from "./components/Avatar";
 import { ChatThread } from "./components/ChatThread";
 import { psychologists } from "./data/psychologists";
 import {
@@ -391,7 +392,7 @@ function ChatsTab({
       )}
       {dialogs.map((dialog) => (
         <button key={dialog.id} className="dialog" onClick={() => onOpen(dialog.id)}>
-          {dialog.psy && <img className="avatar" src={dialog.psy.photo} alt="" />}
+          <Avatar name={dialog.name} src={dialog.psy?.photo} />
           <span className="dialog-text">
             <span className="dialog-top">
               <strong>{dialog.name}</strong>

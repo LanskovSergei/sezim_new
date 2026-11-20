@@ -9,11 +9,12 @@ export function nearestSlot(
   psy: Psychologist,
   quiz: Quiz,
   taken: Set<string>,
+  schedule: boolean[][] | null = null,
   now = new Date(),
 ): Slot | null {
   let fallback: Slot | null = null;
   for (const day of bookingDays(psy, now)) {
-    for (const hour of freeHours(psy, day, taken, now)) {
+    for (const hour of freeHours(psy, day, taken, schedule, now)) {
       const slot = slotAt(day, hour);
       if (quiz.times.includes(partOfHour(hour))) return slot;
       fallback ??= slot;

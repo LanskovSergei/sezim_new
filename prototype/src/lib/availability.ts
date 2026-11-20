@@ -13,6 +13,23 @@ export const PART_LABELS: Record<TimeOfDay, string> = {
   evening: "Вечер",
 };
 
+/** Часы сетки расписания психолога: с 8:00 до 21:00. */
+export const SCHEDULE_HOURS = Array.from({ length: 14 }, (_, i) => 8 + i);
+
+/** Индекс дня недели, начиная с понедельника. */
+export function weekdayIndex(date: Date): number {
+  return (date.getDay() + 6) % 7;
+}
+
+/** Расписание по умолчанию — из полей карточки психолога. */
+export function defaultSchedule(psy: Psychologist): boolean[][] {
+  const hours = psy.slots.flatMap((s) => HOURS_BY_PART[s]);
+  return Array.from({ length: 7 }, (_, d) => {
+    const on = psy.days.includes(d >= 5 ? "weekends" : "weekdays");
+    return SCHEDULE_HOURS.map((h) => on && hours.includes(h));
+  });
+}
+
 /** Сколько дней вперёд открыта запись. */
 export const DAYS_AHEAD = 21;
 
@@ -77,24 +94,29 @@ export function takenSlots(bookings: Booking[], psychologistId: string): Set<str
   );
 }
 
-/** Свободные часы психолога в выбранный день. */
+/**
+ * Свободные часы психолога в выбранный день.
+ * Если психолог сохранил своё расписание, берём рабочие часы из него.
+ */
 export function freeHours(
   psy: Psychologist,
   day: Date,
   taken: Set<string>,
+  schedule: boolean[][] | null = null,
   now = new Date(),
 ): number[] {
   const offset = Math.round(
     (startOfDay(day).getTime() - startOfDay(now).getTime()) / 86_400_000,
   );
   if (offset < psy.nearestDays || offset >= psy.nearestDays + DAYS_AHEAD) return [];
-  if (!psy.days.includes(dayPart(day))) return [];
+  const working = schedule
+    ? SCHEDULE_HOURS.filter((_, i) => schedule[weekdayIndex(day)][i])
+    : psy.days.includes(dayPart(day))
+      ? psy.slots.flatMap((part) => HOURS_BY_PART[part]).sort((a, b) => a - b)
+      : [];
 
   const key = dateKey(day);
-  return psy.slots
-    .flatMap((part) => HOURS_BY_PART[part])
-    .sort((a, b) => a - b)
-    .filter((hour) => {
+  return working.filter((hour) => {
       const slot = slotAt(day, hour);
       if (new Date(slot.startsAt).getTime() - now.getTime() < MIN_LEAD_MS) return false;
       if (taken.has(slot.startsAt)) return false;

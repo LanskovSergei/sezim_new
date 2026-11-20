@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { formatTime } from "../lib/labels";
+import { Avatar } from "./Avatar";
 import type { ChatMessage } from "../types";
 
 type Props = {
@@ -46,23 +47,13 @@ export function ChatThread({
     onSend(text);
   }
 
-  const initials = title
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2);
-
   return (
     <>
       <div className="chat-head">
         <button className="chat-back" onClick={onBack} aria-label="Назад к чатам">
           ←
         </button>
-        {avatar ? (
-          <img className="avatar small" src={avatar} alt="" />
-        ) : (
-          <span className="avatar small initials">{initials}</span>
-        )}
+        <Avatar name={title} src={avatar} size="small" />
         <div className="grow">
           <strong>{title}</strong>
           {subtitle && <div className="hint">{subtitle}</div>}

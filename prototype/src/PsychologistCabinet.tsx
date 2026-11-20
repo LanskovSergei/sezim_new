@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "./api/client";
+import { Avatar } from "./components/Avatar";
 import { ChatThread } from "./components/ChatThread";
-import { HOURS_BY_PART, addDays, startOfDay } from "./lib/availability";
+import { SCHEDULE_HOURS, addDays, defaultSchedule, startOfDay } from "./lib/availability";
 import { formatMoney, formatTime, userLabel } from "./lib/labels";
 import type { Booking, ChatMessage, Psychologist, User } from "./types";
 
@@ -16,7 +17,7 @@ type Props = {
 
 /** Комиссия платформы, доля от цены сессии. */
 const COMMISSION = 0.2;
-const HOURS = Array.from({ length: 14 }, (_, i) => 8 + i);
+const HOURS = SCHEDULE_HOURS;
 const WEEK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const PAYOUT_STEPS = ["Создана", "Одобрена", "Отправлена", "Выплачена"];
 
@@ -179,7 +180,7 @@ export function PsychologistCabinet({ psy, onLogout, onEnterRoom }: Props) {
             )}
             {dialogs.map((d) => (
               <button key={d.userId} className="dialog" onClick={() => setOpenUserId(d.userId)}>
-                <span className="avatar small initials">{d.name.slice(0, 2)}</span>
+                <Avatar name={d.name} size="small" />
                 <span className="dialog-text">
                   <span className="dialog-top">
                     <strong>{d.name}</strong>
@@ -335,15 +336,18 @@ function TodayTab({
 }
 
 function ScheduleTab({ psy }: { psy: Psychologist }) {
-  const [grid, setGrid] = useState<boolean[][]>(() =>
-    WEEK.map((_, d) => {
-      const weekend = d >= 5;
-      const dayOn = psy.days.includes(weekend ? "weekends" : "weekdays");
-      const hours = psy.slots.flatMap((s) => HOURS_BY_PART[s]);
-      return HOURS.map((h) => dayOn && hours.includes(h));
-    }),
-  );
-  const [saved, setSaved] = useState(false);
+  const [grid, setGrid] = useState<boolean[][]>(() => defaultSchedule(psy));
+  const [saved, setSaved] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    api.schedule(psy.id).then((stored) => {
+      if (active && stored) setGrid(stored);
+    });
+    return () => {
+      active = false;
+    };
+  }, [psy.id]);
   const [vacations, setVacations] = useState([{ from: "28 декабря", to: "5 января" }]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -367,14 +371,17 @@ function ScheduleTab({ psy }: { psy: Psychologist }) {
     <>
       <h2>Расписание</h2>
       <p className="hint">
-        Отметьте рабочие часы один раз — клиенты увидят свободные окна на 3 недели вперёд.
-        Нажмите или проведите по ячейкам.
+        Отметьте рабочие часы — после сохранения клиенты сразу увидят новые окна на 3 недели
+        вперёд. Нажмите или проведите по ячейкам.
       </p>
       <div className="header" style={{ margin: "10px 0" }}>
         <strong>{hoursPerWeek} ч в неделю</strong>
         <button
           className="btn small"
-          onClick={() => setSaved(true)}
+          onClick={async () => {
+            await api.saveSchedule(psy.id, grid);
+            setSaved(true);
+          }}
           disabled={saved}
         >
           {saved ? "Сохранено" : "Сохранить"}
