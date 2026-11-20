@@ -41,17 +41,49 @@ export type MatchResult = Psychologist & {
   reason: string;
 };
 
+export type AuthProvider =
+  | "phone"
+  | "google"
+  | "apple"
+  | "telegram"
+  | "whatsapp"
+  | "yandex"
+  | "vk"
+  | "tid"
+  | "sber";
+
 export type User = {
   id: string;
-  phone: string;
+  provider: AuthProvider;
+  /** Номер телефона или идентификатор аккаунта у внешнего провайдера */
+  identity: string;
   name?: string;
+  email?: string;
+};
+
+export type ProfilePatch = Pick<User, "name" | "email">;
+
+export type ChatMessage = {
+  id: string;
+  userId: string;
+  psychologistId: string;
+  from: "client" | "psychologist";
+  text: string;
+  createdAt: string;
+};
+
+export type Slot = {
+  startsAt: string;
+  label: string;
 };
 
 export type Booking = {
   id: string;
+  userId: string;
   psychologistId: string;
   psychologistName: string;
   slotLabel: string;
+  startsAt: string;
   amount: number;
   method: PaymentMethod;
   status: "paid";

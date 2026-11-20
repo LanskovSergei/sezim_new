@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
+import { Cabinet } from "./Cabinet";
+import { BookingCard } from "./components/BookingCard";
 import { TOPICS } from "./data/psychologists";
 import { api } from "./api/client";
+import { PAYMENT_LABELS, PROVIDERS } from "./lib/labels";
+import type { ExternalProvider } from "./lib/labels";
+import { nearestSlot } from "./lib/slot";
 import type {
+  Booking,
   DayPart,
   Format,
   Gender,
@@ -10,7 +16,9 @@ import type {
   MatchResult,
   PaymentMethod,
   Quiz,
+  Slot,
   TimeOfDay,
+  User,
 } from "./types";
 
 type Step =
@@ -20,9 +28,12 @@ type Step =
   | "quiz3"
   | "auth"
   | "otp"
-  | "dashboard"
+  | "matches"
   | "checkout"
-  | "success";
+  | "paid"
+  | "cabinet";
+
+const FIRST_SESSION_DISCOUNT = 500;
 
 const emptyQuiz: Quiz = {
   format: "individual",
@@ -37,14 +48,24 @@ const emptyQuiz: Quiz = {
 export default function App() {
   const [step, setStep] = useState<Step>("landing");
   const [quiz, setQuiz] = useState<Quiz>(emptyQuiz);
+  const [user, setUser] = useState<User | null>(null);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState(["", "", "", ""]);
   const [otpHint, setOtpHint] = useState("1111");
   const [error, setError] = useState("");
   const [matches, setMatches] = useState<MatchResult[]>([]);
   const [selected, setSelected] = useState<MatchResult | null>(null);
+  const [slot, setSlot] = useState<Slot | null>(null);
   const [method, setMethod] = useState<PaymentMethod>("rf_card");
-  const [slotLabel, setSlotLabel] = useState("14 ноября, 19:00");
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [paidBooking, setPaidBooking] = useState<Booking | null>(null);
+  /** Последняя завершённая анкета; незаконченные правки в неё не попадают. */
+  const [savedQuiz, setSavedQuiz] = useState<Quiz | null>(null);
+  /** Пользователь ушёл в анкету или подборку из кабинета — показываем путь назад. */
+  const [fromCabinet, setFromCabinet] = useState(false);
+
+  const fromQuiz = matches.length > 0;
+  const discount = bookings.length === 0 ? FIRST_SESSION_DISCOUNT : 0;
 
   const grouped = useMemo(() => {
     const map = new Map<number, MatchResult[]>();
@@ -59,7 +80,34 @@ export default function App() {
   async function finishQuiz() {
     const list = await api.match(quiz);
     setMatches(list);
-    setStep("auth");
+    setSavedQuiz(quiz);
+    if (user) await api.saveQuiz(user.id, quiz);
+    setStep(user ? "matches" : "auth");
+  }
+
+  /** После любого способа входа: с анкетой — к подборке, без неё — в кабинет. */
+  async function enter(next: User) {
+    setUser(next);
+    setError("");
+    setOtp(["", "", "", ""]);
+    setBookings(await api.bookings(next.id));
+    if (fromQuiz) {
+      await api.saveQuiz(next.id, quiz);
+    } else {
+      const saved = await api.quiz(next.id);
+      if (saved) {
+        setQuiz(saved);
+        setSavedQuiz(saved);
+      }
+    }
+    setStep(fromQuiz ? "matches" : "cabinet");
+  }
+
+  function openCabinet() {
+    // Брошенные на полпути правки анкеты откатываем к сохранённым ответам.
+    if (savedQuiz) setQuiz(savedQuiz);
+    setFromCabinet(false);
+    setStep("cabinet");
   }
 
   async function sendCode() {
@@ -77,35 +125,58 @@ export default function App() {
   async function verify() {
     setError("");
     try {
-      await api.verify(phone.replace(/\D/g, ""), otp.join(""));
-      setStep("dashboard");
+      await enter(await api.verify(phone.replace(/\D/g, ""), otp.join("")));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка входа");
     }
   }
 
+  async function loginWith(provider: ExternalProvider) {
+    await enter(await api.loginWithProvider(provider));
+  }
+
   async function pay() {
-    if (!selected) return;
-    await api.checkout({
+    if (!selected || !slot || !user) return;
+    const booking = await api.checkout({
+      userId: user.id,
       psychologistId: selected.id,
       psychologistName: selected.name,
-      slotLabel,
-      amount: selected.price - 500,
+      slotLabel: slot.label,
+      startsAt: slot.startsAt,
+      amount: selected.price - discount,
       method,
     });
-    setStep("success");
+    setBookings(await api.bookings(user.id));
+    setPaidBooking(booking);
+    setStep("paid");
+  }
+
+  async function logout() {
+    await api.logout();
+    setUser(null);
+    setQuiz(emptyQuiz);
+    setMatches([]);
+    setBookings([]);
+    setSelected(null);
+    setSlot(null);
+    setPaidBooking(null);
+    setSavedQuiz(null);
+    setFromCabinet(false);
+    setPhone("");
+    setStep("landing");
   }
 
   return (
     <div className="app-shell">
-      <div className="phone">
+      <div className={`phone ${step === "cabinet" ? "fit" : ""}`}>
         {step === "landing" && (
           <div className="screen">
             <p className="hint">Прототип психологи · данные в localStorage</p>
             <h1>Личный кабинет как центр</h1>
             <p>
-              Сначала анкета и подбор, потом вход по телефону, затем запись и оплата.
-              Код подтверждения в прототипе: 1111.
+              Сначала анкета, потом вход любым удобным способом, затем подборка
+              психологов и оплата. Бронь появляется в личном кабинете. Код
+              подтверждения в прототипе: 1111.
             </p>
             <button className="btn" onClick={() => setStep("quiz1")}>
               Подобрать психолога
@@ -122,6 +193,11 @@ export default function App() {
 
         {step === "quiz1" && (
           <div className="screen">
+            {fromCabinet && (
+              <button className="back" onClick={openCabinet}>
+                ← В личный кабинет
+              </button>
+            )}
             <Progress n={1} />
             <h2>Для кого ищем специалиста?</h2>
             {(
@@ -311,14 +387,21 @@ export default function App() {
         )}
 
         {step === "auth" && (
-          <div className="screen">
-            <button className="back" onClick={() => setStep("landing")}>
+          <div className="screen" style={{ overflowY: "auto" }}>
+            <button
+              className="back"
+              onClick={() => {
+                setError("");
+                setStep(fromQuiz ? "quiz3" : "landing");
+              }}
+            >
               ← Назад
             </button>
-            <h2>Сохраните подборку</h2>
+            <h2>{fromQuiz ? "Сохраните подборку" : "Вход в личный кабинет"}</h2>
             <p>
-              Мы нашли {matches.length || "несколько"} специалистов. Введите номер,
-              чтобы открыть личный кабинет.
+              {fromQuiz
+                ? `Мы нашли ${matches.length} специалистов. Войдите любым способом, чтобы увидеть подборку.`
+                : "Войдите любым удобным способом."}
             </p>
             <div className="phone-input">
               <span>+7</span>
@@ -332,15 +415,37 @@ export default function App() {
             <button className="btn" onClick={sendCode}>
               Получить код
             </button>
+            <div className="divider">или войти через</div>
+            <div className="providers">
+              {PROVIDERS.map((p) => (
+                <button key={p.id} className="provider" onClick={() => loginWith(p.id)}>
+                  <span
+                    className="provider-mark"
+                    aria-hidden="true"
+                    style={{ background: p.color, color: p.darkMark ? "#1c1915" : "white" }}
+                  >
+                    {p.mark}
+                  </span>
+                  {p.label}
+                </button>
+              ))}
+            </div>
             <p className="hint" style={{ marginTop: 16 }}>
-              Позже сюда встанет каскад Telegram → WhatsApp → SMS.
+              Кнопки сервисов в прототипе — заглушки: вход срабатывает сразу, без
+              перехода к провайдеру.
             </p>
           </div>
         )}
 
         {step === "otp" && (
           <div className="screen">
-            <button className="back" onClick={() => setStep("auth")}>
+            <button
+              className="back"
+              onClick={() => {
+                setError("");
+                setStep("auth");
+              }}
+            >
               ← Назад
             </button>
             <h2>Введите код</h2>
@@ -368,12 +473,19 @@ export default function App() {
           </div>
         )}
 
-        {step === "dashboard" && (
+        {step === "matches" && (
           <div className="screen" style={{ overflowY: "auto" }}>
+            {fromCabinet && (
+              <button className="back" onClick={openCabinet}>
+                ← В личный кабинет
+              </button>
+            )}
             <div className="header">
               <div>
-                <h2>Личный кабинет</h2>
-                <p className="hint">Баланс: 0 сессий · {phone}</p>
+                <h2>Ваша подборка</h2>
+                <p className="hint">
+                  Подобрано по анкете. Выберите специалиста и оплатите сессию.
+                </p>
               </div>
             </div>
             {grouped.map(([queue, list]) => (
@@ -409,15 +521,7 @@ export default function App() {
                         style={{ width: "auto", padding: "8px 14px" }}
                         onClick={() => {
                           setSelected(psy);
-                          setSlotLabel(
-                            psy.slots.some((slot) => quiz.times.includes(slot))
-                              ? quiz.times.includes("evening")
-                                ? "14 ноября, 19:00"
-                                : quiz.times.includes("afternoon")
-                                  ? "15 ноября, 14:00"
-                                  : "15 ноября, 10:00"
-                              : "Ближайшее окно: 15 ноября, 10:00",
-                          );
+                          setSlot(nearestSlot(psy, quiz));
                           setStep("checkout");
                         }}
                       >
@@ -431,42 +535,40 @@ export default function App() {
           </div>
         )}
 
-        {step === "checkout" && selected && (
+        {step === "checkout" && selected && slot && (
           <div className="screen">
-            <button className="back" onClick={() => setStep("dashboard")}>
+            <button className="back" onClick={() => setStep("matches")}>
               ← Назад
             </button>
             <h2>Оформление сессии</h2>
             <p>
-              {selected.name} · {slotLabel}
+              {selected.name} · {slot.label}
             </p>
-            {(
-              [
-                ["rf_card", "Карта РФ"],
-                ["cis_card", "Карта СНГ (Kaspi, Payme)"],
-                ["crypto", "USDT / USDC"],
-              ] as [PaymentMethod, string][]
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                className={`choice pay-option ${method === id ? "on" : ""}`}
-                onClick={() => setMethod(id)}
-              >
-                {label}
-              </button>
-            ))}
-            <div className="card">
+            {(Object.entries(PAYMENT_LABELS) as [PaymentMethod, string][]).map(
+              ([id, label]) => (
+                <button
+                  key={id}
+                  className={`choice pay-option ${method === id ? "on" : ""}`}
+                  onClick={() => setMethod(id)}
+                >
+                  {label}
+                </button>
+              ),
+            )}
+            <div className="card static">
               <div className="header">
                 <span>Сессия 50 мин</span>
                 <span>{selected.price.toLocaleString("ru-RU")} ₽</span>
               </div>
-              <div className="header">
-                <span>Скидка на первую</span>
-                <span>−500 ₽</span>
-              </div>
+              {discount > 0 && (
+                <div className="header">
+                  <span>Скидка на первую</span>
+                  <span>−{discount} ₽</span>
+                </div>
+              )}
               <div className="header" style={{ marginBottom: 0 }}>
                 <strong>Итого</strong>
-                <strong>{(selected.price - 500).toLocaleString("ru-RU")} ₽</strong>
+                <strong>{(selected.price - discount).toLocaleString("ru-RU")} ₽</strong>
               </div>
             </div>
             <button className="btn mt-auto" onClick={pay}>
@@ -475,20 +577,33 @@ export default function App() {
           </div>
         )}
 
-        {step === "success" && (
-          <div className="screen success">
+        {step === "paid" && paidBooking && (
+          <div className="screen">
             <h2>Сессия оплачена</h2>
-            <p>
-              {selected?.name} · {slotLabel}. Ссылка на комнату появится в кабинете.
-              Бронь сохранена в localStorage — это заглушка базы.
-            </p>
-            <button
-              className="btn ghost"
-              onClick={() => setStep("dashboard")}
-            >
-              Вернуться в кабинет
+            <p>Запись добавлена в личный кабинет.</p>
+            <BookingCard booking={paidBooking} />
+            <button className="btn mt-auto" onClick={openCabinet}>
+              Перейти в личный кабинет
             </button>
           </div>
+        )}
+
+        {step === "cabinet" && user && (
+          <Cabinet
+            user={user}
+            bookings={bookings}
+            quiz={savedQuiz}
+            onFindPsychologist={() => {
+              setFromCabinet(true);
+              setStep(fromQuiz ? "matches" : "quiz1");
+            }}
+            onEditQuiz={() => {
+              setFromCabinet(true);
+              setStep("quiz1");
+            }}
+            onUserChange={setUser}
+            onLogout={logout}
+          />
         )}
       </div>
     </div>

@@ -1,10 +1,19 @@
-import type { Booking, Quiz, User } from "../types";
+import type {
+  AuthProvider,
+  Booking,
+  ChatMessage,
+  ProfilePatch,
+  Quiz,
+  User,
+} from "../types";
 
-const KEY = "психологи-prototype-v1";
+const KEY = "психологи-prototype-v2";
 
 type Db = {
   users: User[];
   bookings: Booking[];
+  messages: ChatMessage[];
+  quizByUser: Record<string, Quiz>;
   lastQuiz: Quiz | null;
   sessionUserId: string | null;
 };
@@ -12,6 +21,8 @@ type Db = {
 const empty: Db = {
   users: [],
   bookings: [],
+  messages: [],
+  quizByUser: {},
   lastQuiz: null,
   sessionUserId: null,
 };
@@ -19,9 +30,9 @@ const empty: Db = {
 function read(): Db {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...empty, ...JSON.parse(raw) } : empty;
+    return raw ? { ...empty, ...JSON.parse(raw) } : { ...empty };
   } catch {
-    return empty;
+    return { ...empty };
   }
 }
 
@@ -36,30 +47,48 @@ export const store = {
   saveQuiz(quiz: Quiz) {
     write({ ...read(), lastQuiz: quiz });
   },
-  upsertUser(phone: string): User {
+  quizFor(userId: string): Quiz | null {
+    return read().quizByUser[userId] ?? null;
+  },
+  saveQuizFor(userId: string, quiz: Quiz) {
     const db = read();
-    let user = db.users.find((u) => u.phone === phone);
+    write({ ...db, quizByUser: { ...db.quizByUser, [userId]: quiz } });
+  },
+  upsertUser(provider: AuthProvider, identity: string): User {
+    const db = read();
+    let user = db.users.find((u) => u.provider === provider && u.identity === identity);
     if (!user) {
-      user = { id: crypto.randomUUID(), phone };
-      db.users.push(user);
+      user = { id: crypto.randomUUID(), provider, identity };
+      db.users = [...db.users, user];
     }
     db.sessionUserId = user.id;
     write(db);
     return user;
   },
-  currentUser(): User | null {
+  updateUser(userId: string, patch: ProfilePatch): User {
     const db = read();
-    return db.users.find((u) => u.id === db.sessionUserId) ?? null;
+    const current = db.users.find((u) => u.id === userId);
+    if (!current) throw new Error("Пользователь не найден");
+    const next = { ...current, ...patch };
+    write({ ...db, users: db.users.map((u) => (u.id === userId ? next : u)) });
+    return next;
+  },
+  logout() {
+    write({ ...read(), sessionUserId: null });
   },
   addBooking(booking: Booking) {
     const db = read();
-    db.bookings.unshift(booking);
+    db.bookings = [booking, ...db.bookings];
     write(db);
   },
-  bookingsFor(userPhone: string): Booking[] {
+  bookingsFor(userId: string): Booking[] {
+    return read().bookings.filter((b) => b.userId === userId);
+  },
+  addMessage(message: ChatMessage) {
     const db = read();
-    const user = db.users.find((u) => u.phone === userPhone);
-    if (!user) return [];
-    return db.bookings;
+    write({ ...db, messages: [...db.messages, message] });
+  },
+  messagesFor(userId: string): ChatMessage[] {
+    return read().messages.filter((m) => m.userId === userId);
   },
 };
