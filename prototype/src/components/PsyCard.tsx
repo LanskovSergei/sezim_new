@@ -18,6 +18,12 @@ type Props = {
   comparing?: boolean;
   onCompare?: () => void;
   onPick: () => void;
+  /** Текст главной кнопки; по умолчанию «Выбрать время». */
+  actionLabel?: string;
+  /** Строка вместо «Ближайшее окно», например «Свободна в выбранное время». */
+  note?: string;
+  /** Посмотреть другие окна этого психолога. */
+  onOtherTime?: () => void;
 };
 
 /** Карточка психолога: коротко в списке, по «Подробнее» — образование, языки, отзывы. */
@@ -31,6 +37,9 @@ export function PsyCard({
   comparing,
   onCompare,
   onPick,
+  actionLabel = "Выбрать время",
+  note,
+  onOtherTime,
 }: Props) {
   const [open, setOpen] = useState(false);
   const topics = [...psy.topics].sort(
@@ -109,11 +118,20 @@ export function PsyCard({
       </button>
 
       <div className="hint" style={{ margin: "8px 0 0" }}>
-        {nearest === undefined
-          ? "Ищем ближайшее окно…"
-          : nearest
-            ? `Ближайшее окно: ${nearest.label}`
-            : "Свободных окон в ближайшие недели нет"}
+        {note ??
+          (nearest === undefined
+            ? "Ищем ближайшее окно…"
+            : nearest
+              ? `Ближайшее окно: ${nearest.label}`
+              : "Свободных окон в ближайшие недели нет")}
+        {onOtherTime && (
+          <>
+            {" · "}
+            <button className="link-btn inline" onClick={onOtherTime}>
+              другое время
+            </button>
+          </>
+        )}
       </div>
       <div className="header" style={{ marginTop: 12, marginBottom: 0, gap: 8 }}>
         <strong>{formatMoney(psy.price)}</strong>
@@ -124,8 +142,8 @@ export function PsyCard({
               Сравнить
             </label>
           )}
-          <button className="btn small" onClick={onPick} disabled={nearest === null}>
-            Выбрать время
+          <button className="btn small" onClick={onPick} disabled={!note && nearest === null}>
+            {actionLabel}
           </button>
         </div>
       </div>

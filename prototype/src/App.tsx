@@ -5,7 +5,6 @@ import { DemoPanel } from "./components/DemoPanel";
 import { Catalog } from "./screens/Catalog";
 import { SlotPicker } from "./screens/SlotPicker";
 import { VideoRoom } from "./screens/VideoRoom";
-import { Avatar } from "./components/Avatar";
 import { BookingCard } from "./components/BookingCard";
 import { PsyCard } from "./components/PsyCard";
 import { TOPIC_GROUPS, UNSURE, psychologists } from "./data/psychologists";
@@ -18,11 +17,14 @@ import {
   PAYMENT_OPTIONS,
   PROVIDERS,
   formatMoney,
+  formatTime,
 } from "./lib/labels";
 import type { ExternalProvider } from "./lib/labels";
-import { HOT_DISCOUNT, slotPrice } from "./lib/availability";
+import { HOT_DISCOUNT, SCHEDULE_HOURS, isHot, slotAt, slotPrice } from "./lib/availability";
 import { interpretTopics } from "./lib/interpret";
-import { hotSlots, nearestSlot } from "./lib/slot";
+import { nearestSlot } from "./lib/slot";
+import { freeAt, loadAvailability } from "./lib/pool";
+import { TimeFirst } from "./screens/TimeFirst";
 import type {
   Booking,
   Format,
@@ -42,6 +44,7 @@ type Step =
   | "quiz3"
   | "auth"
   | "otp"
+  | "time"
   | "matches"
   | "catalog"
   | "slot"
@@ -60,9 +63,6 @@ type Room = {
   role: "client" | "psychologist";
   peerName: string;
 };
-
-/** Горящее окно конкретного психолога для полосы над подборкой. */
-type HotOffer = { psy: Psychologist; slot: Slot };
 
 const FIRST_SESSION_DISCOUNT = 500;
 const DEMO_PHONE = "9001234567";
@@ -112,7 +112,15 @@ export default function App() {
   const [fromCabinet, setFromCabinet] = useState(false);
   /** Ближайшее свободное окно каждого психолога из подборки. */
   const [nearest, setNearest] = useState<Record<string, Slot | null>>({});
-  const [hot, setHot] = useState<HotOffer[]>([]);
+  /** Окно, которое клиент выбрал до психолога: сначала время, потом специалист. */
+  const [wanted, setWanted] = useState<Slot | null>(null);
+  /** Кто из подборки свободен в выбранное окно; null — ещё считаем. */
+  const [freeIds, setFreeIds] = useState<Set<string> | null>(null);
+  /** Другие окна в тот же день — чтобы перевыбрать время прямо в списке психологов. */
+  const [dayHours, setDayHours] = useState<{ slot: Slot; count: number }[]>([]);
+  const [showBusy, setShowBusy] = useState(false);
+  /** Куда ведёт «Назад» с оплаты: к подборке на это время или к календарю психолога. */
+  const [checkoutBack, setCheckoutBack] = useState<"slot" | "matches">("slot");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [slotError, setSlotError] = useState("");
   const [rescheduling, setRescheduling] = useState<Booking | null>(null);
@@ -129,45 +137,57 @@ export default function App() {
     api.favorites().then(setFavorites);
   }, []);
 
+  /** Подходящие по анкете: по ним строим общий календарь и список на выбранное время. */
+  const suitable = useMemo(() => {
+    const best = matches.filter((m) => m.queue < 4);
+    return best.length > 0 ? best : matches;
+  }, [matches]);
+
   useEffect(() => {
     if (step !== "matches") return;
     let active = true;
-    Promise.all(
-      matches.map(async (psy) => {
-        const [taken, schedule] = await Promise.all([api.takenSlots(psy.id), api.schedule(psy.id)]);
-        return {
-          psy,
-          nearest: nearestSlot(psy, taken, schedule),
-          hot: hotSlots(psy, taken, schedule),
-        };
-      }),
-    ).then((rows) => {
+    loadAvailability(matches).then((avail) => {
       if (!active) return;
-      setNearest(Object.fromEntries(rows.map((r) => [r.psy.id, r.nearest])));
-      setHot(
-        rows
-          .filter((r) => r.psy.queue < 4 && r.hot.length > 0)
-          .map((r) => ({ psy: r.psy, slot: r.hot[0] }))
-          .sort((a, b) => a.slot.startsAt.localeCompare(b.slot.startsAt)),
+      setNearest(
+        Object.fromEntries(
+          matches.map((psy) => [
+            psy.id,
+            nearestSlot(psy, avail[psy.id].taken, avail[psy.id].schedule),
+          ]),
+        ),
       );
+      setFreeIds(
+        wanted ? new Set(matches.filter((psy) => freeAt(psy, avail, wanted)).map((p) => p.id)) : null,
+      );
+      if (wanted) {
+        const day = new Date(wanted.startsAt);
+        setDayHours(
+          SCHEDULE_HOURS.map((hour) => {
+            const slot = slotAt(day, hour);
+            return { slot, count: suitable.filter((psy) => freeAt(psy, avail, slot)).length };
+          }).filter((h) => h.count > 0),
+        );
+      }
     });
     return () => {
       active = false;
     };
-  }, [step, matches]);
+  }, [step, matches, wanted, suitable]);
+
 
   const fromQuiz = matches.length > 0;
   const discount = bookings.length === 0 ? FIRST_SESSION_DISCOUNT : 0;
 
+  /** Свободные в выбранное окно — по очередям подбора. */
   const grouped = useMemo(() => {
-    const best = matches.filter((m) => m.queue < 4);
-    const list = best.length > 0 ? best : matches.slice(0, 3);
     const map = new Map<number, MatchResult[]>();
-    for (const item of list) {
+    for (const item of suitable) {
+      if (!freeIds?.has(item.id)) continue;
       map.set(item.queue, [...(map.get(item.queue) ?? []), item]);
     }
     return [...map.entries()];
-  }, [matches]);
+  }, [suitable, freeIds]);
+  const busy = freeIds ? suitable.filter((m) => !freeIds.has(m.id)) : [];
 
   async function toggleFavorite(id: string) {
     setFavorites(await api.toggleFavorite(id));
@@ -178,7 +198,8 @@ export default function App() {
     setMatches(list);
     setSavedQuiz(quiz);
     if (user) await api.saveQuiz(user.id, quiz);
-    setStep(user ? "matches" : "auth");
+    setWanted(null);
+    setStep(user ? "time" : "auth");
   }
 
   /** После любого способа входа: с анкетой — к подборке, без неё — в кабинет. */
@@ -197,7 +218,7 @@ export default function App() {
       }
     }
     if (selected && slot) setStep("checkout");
-    else setStep(fromQuiz ? "matches" : "cabinet");
+    else setStep(fromQuiz ? (wanted ? "matches" : "time") : "cabinet");
   }
 
   function openCabinet() {
@@ -212,7 +233,18 @@ export default function App() {
     setSlot(null);
     setSlotError("");
     setSlotBack(back);
+    setCheckoutBack("slot");
     setStep("slot");
+  }
+
+  /** Сразу к оплате окна, выбранного в общем календаре. */
+  function bookWanted(psy: Psychologist) {
+    if (!wanted) return;
+    setSelected(psy);
+    setSlot(wanted);
+    setSlotBack("matches");
+    setCheckoutBack("matches");
+    setStep("checkout");
   }
 
   function digits(): string {
@@ -381,6 +413,7 @@ export default function App() {
     setRoom(null);
     setRescheduling(null);
     setGuess(null);
+    setWanted(null);
     setStep("landing");
   }
 
@@ -417,7 +450,8 @@ export default function App() {
     setTherapist(null);
     setRoom(null);
     setFromCabinet(false);
-    setStep("matches");
+    setWanted(null);
+    setStep("time");
   }
 
   async function demoTherapist() {
@@ -485,10 +519,10 @@ export default function App() {
         {step === "landing" && (
           <div className="screen landing">
             <span className="eyebrow">Онлайн-психологи · RU · KZ · UZ · KG · AZ · TR</span>
-            <h1>Подберём психолога под ваш запрос</h1>
+            <h1>Психолог, который свободен, когда удобно вам</h1>
             <p>
-              Ответьте на 3 вопроса — покажем подходящих специалистов. Время выберете прямо в
-              календаре психолога, сессии — по видео на сайте.
+              Ответьте на 3 вопроса и выберите удобное время — покажем подходящих психологов,
+              свободных именно тогда. Сессии по видео прямо на сайте.
             </p>
             <ul className="perks">
               <li>{psychologists.length} специалистов с проверенными дипломами и отзывами</li>
@@ -836,58 +870,65 @@ export default function App() {
           </div>
         )}
 
-        {step === "matches" && (
+        {step === "time" && (
+          <TimeFirst
+            list={suitable}
+            initial={wanted}
+            backLabel={fromCabinet ? "В личный кабинет" : "К анкете"}
+            onBack={fromCabinet ? openCabinet : () => setStep("quiz3")}
+            onPick={(next) => {
+              setWanted(next);
+              setFreeIds(null);
+              setShowBusy(false);
+              setStep("matches");
+            }}
+          />
+        )}
+
+        {step === "matches" && wanted && (
           <div className="screen" style={{ overflowY: "auto" }}>
-            {fromCabinet && (
-              <button className="back" onClick={openCabinet}>
-                ← В личный кабинет
-              </button>
-            )}
-            <div className="header">
-              <div>
-                <h2>Ваша подборка</h2>
-                <p className="hint" style={{ marginBottom: 0 }}>
-                  Самые подходящие по анкете. Время выберете в календаре психолога.
-                </p>
+            <button className="back" onClick={() => setStep("time")}>
+              ← К выбору времени
+            </button>
+            <h2>Свободны в это время</h2>
+            <div className="wanted">
+              <div className="grow">
+                <strong>{wanted.label}</strong>
+                <div className="hint">
+                  {freeIds === null
+                    ? "Проверяем расписание…"
+                    : `Подходят по анкете и свободны: ${suitable.filter((m) => freeIds.has(m.id)).length}`}
+                  {isHot(wanted.startsAt) && (
+                    <span className="hot-price"> · горящее окно −{HOT_DISCOUNT * 100}%</span>
+                  )}
+                </div>
               </div>
+              <button className="btn secondary small" onClick={() => setStep("time")}>
+                Другой день
+              </button>
             </div>
-
-            {hot.length > 0 && (
-              <>
-                <div className="queue-title hot-title">
-                  Горящие окна · −{HOT_DISCOUNT * 100}%
-                </div>
-                <div className="hot-strip">
-                  {hot.map(({ psy, slot: offer }) => (
-                    <div key={psy.id} className="hot-card">
-                      <div className="row" style={{ alignItems: "center" }}>
-                        <Avatar name={psy.name} src={psy.photo} size="small" />
-                        <strong className="grow">{psy.name}</strong>
-                      </div>
-                      <span className="hint">{offer.label}</span>
-                      <span>
-                        <s className="hint">{formatMoney(psy.price)}</s>{" "}
-                        <strong className="hot-price">
-                          {formatMoney(slotPrice(psy.price, offer.startsAt))}
-                        </strong>
-                      </span>
-                      <button
-                        className="btn small"
-                        onClick={() => {
-                          setSelected(psy);
-                          setSlot(offer);
-                          setSlotBack("matches");
-                          setStep("checkout");
-                        }}
-                      >
-                        Записаться
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </>
+            {dayHours.length > 1 && (
+              <div className="time-strip" aria-label="Другое время в этот день">
+                {dayHours.map((h) => (
+                  <button
+                    key={h.slot.startsAt}
+                    className={`time-chip ${isHot(h.slot.startsAt) ? "hot" : ""} ${h.slot.startsAt === wanted.startsAt ? "on" : ""}`}
+                    aria-pressed={h.slot.startsAt === wanted.startsAt}
+                    onClick={() => {
+                      setWanted(h.slot);
+                      setShowBusy(false);
+                    }}
+                  >
+                    <strong>{formatTime(h.slot.startsAt)}</strong>
+                    <span>{h.count} псих.</span>
+                  </button>
+                ))}
+              </div>
             )}
 
+            {freeIds !== null && grouped.length === 0 && (
+              <p>В это время никто из подборки не свободен. Выберите другое окно.</p>
+            )}
             {grouped.map(([queue, list]) => (
               <div key={queue}>
                 <div className="queue-title">{QUEUE_TITLES[queue]}</div>
@@ -897,14 +938,38 @@ export default function App() {
                     psy={psy}
                     reason={psy.queue > 1 ? psy.reason : undefined}
                     highlight={quiz.topics}
+                    note={`${psy.gender === "female" ? "Свободна" : "Свободен"} ${wanted.label}`}
+                    favorite={favorites.includes(psy.id)}
+                    onFavorite={() => toggleFavorite(psy.id)}
+                    actionLabel={`Записаться · ${formatMoney(slotPrice(psy.price, wanted.startsAt))}`}
+                    onPick={() => bookWanted(psy)}
+                    onOtherTime={() => pickPsychologist(psy, "matches")}
+                  />
+                ))}
+              </div>
+            ))}
+
+            {busy.length > 0 && !showBusy && (
+              <button className="link-btn" style={{ marginTop: 6 }} onClick={() => setShowBusy(true)}>
+                Ещё {busy.length} подходят по анкете, но заняты в это время — показать
+              </button>
+            )}
+            {busy.length > 0 && showBusy && (
+              <>
+                <div className="queue-title">Подходят, но заняты в это время</div>
+                {busy.map((psy) => (
+                  <PsyCard
+                    key={psy.id}
+                    psy={psy}
+                    highlight={quiz.topics}
                     nearest={psy.id in nearest ? nearest[psy.id] : undefined}
                     favorite={favorites.includes(psy.id)}
                     onFavorite={() => toggleFavorite(psy.id)}
                     onPick={() => pickPsychologist(psy, "matches")}
                   />
                 ))}
-              </div>
-            ))}
+              </>
+            )}
 
             <button
               className="see-all"
@@ -1002,8 +1067,8 @@ export default function App() {
 
         {step === "checkout" && selected && slot && (
           <div className="screen" style={{ overflowY: "auto" }}>
-            <button className="back" onClick={() => setStep("slot")}>
-              ← Изменить время
+            <button className="back" onClick={() => setStep(checkoutBack)}>
+              ← {checkoutBack === "matches" ? "К психологам на это время" : "Изменить время"}
             </button>
             <h2>Оформление сессии</h2>
             <p>
@@ -1078,7 +1143,7 @@ export default function App() {
             onBookWith={(psy) => pickPsychologist(psy, "cabinet")}
             onFindPsychologist={() => {
               setFromCabinet(true);
-              setStep(fromQuiz ? "matches" : "quiz1");
+              setStep(fromQuiz ? "time" : "quiz1");
             }}
             onOpenFavorites={() => {
               setCatalogBack("cabinet");
