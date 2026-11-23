@@ -1499,6 +1499,24 @@ p {
   color: #b4441c;
 }
 
+/* Выбранное окно всегда тёмное с белым текстом, даже если оно горящее. */
+.hour.on,
+.hour.hot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.hour .count {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.hour.on .count {
+  color: #dce8e3;
+}
+
 .hour.on small {
   color: inherit;
 }
@@ -1725,4 +1743,75 @@ p {
 
 .room-btn svg {
   display: block;
+}
+
+/* Сначала время: быстрый выбор окна полосой */
+.time-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 -22px 4px;
+  padding: 0 22px 6px;
+}
+
+.time-chip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.time-chip span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.time-chip.hot {
+  background: #fff6f0;
+  border-color: #f1d2bf;
+}
+
+.time-chip.on,
+.time-chip.hot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.time-chip.on span {
+  color: #dce8e3;
+}
+
+.wanted {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #f3f7f5;
+  border: 1px solid #cfe0d8;
+  margin-bottom: 8px;
+}
+
+.link-btn.inline {
+  padding: 0;
+  font-size: inherit;
+}
+
+.hour .count small {
+  display: inline;
+  font-size: inherit;
+}
+
+.wanted + .time-strip {
+  margin-bottom: 8px;
 }
