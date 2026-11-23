@@ -1,66 +1,55 @@
-import { psychologists } from "../data/psychologists";
-import type { Horizon, MatchResult, Quiz } from "../types";
+import { UNSURE, psychologists } from "../data/psychologists";
+import type { AgeBand, Budget, MatchResult, Psychologist, Quiz } from "../types";
 
-function horizonLimit(horizon: Horizon): number {
-  if (horizon === "week") return 7;
-  if (horizon === "two_weeks") return 14;
-  return 30;
+export function ageFits(psy: Psychologist, band: AgeBand): boolean {
+  if (band === "under35") return psy.age < 35;
+  if (band === "35to45") return psy.age >= 35 && psy.age <= 45;
+  if (band === "over45") return psy.age > 45;
+  return true;
 }
 
+export function budgetFits(psy: Psychologist, budget: Budget): boolean {
+  return budget === "any" || psy.price <= budget;
+}
+
+/**
+ * Подбор по анкете. Время и язык не участвуют: время выбирают в календаре
+ * психолога, язык — в фильтрах каталога.
+ *
+ * Очереди: 1 — совпало всё; 2 — всё, кроме цены; 3 — тема совпала,
+ * но пол или возраст другие; 4 — остальные.
+ */
 export function matchPsychologists(quiz: Quiz): MatchResult[] {
-  const topics = quiz.topics.length ? quiz.topics : ["Просто что-то не так"];
-  const times = quiz.times.length ? quiz.times : ["evening"];
-  const days = quiz.days.length ? quiz.days : ["weekdays"];
+  const topics = quiz.topics.filter((t) => t !== UNSURE);
 
   return psychologists
     .map((psy) => {
-      const topicHit = psy.topics.some((t) => topics.includes(t));
-      const wantedLangs = quiz.languages.length ? quiz.languages : ["ru"];
-      const languageHit = psy.languages.some((lang) => wantedLangs.includes(lang));
+      const overlap = psy.topics.filter((t) => topics.includes(t)).length;
+      const topicHit = topics.length === 0 || overlap > 0;
       const formatHit = psy.formats.includes(quiz.format);
-      const timeHit = psy.slots.some((slot) => times.includes(slot));
-      const daysHit = psy.days.some((day) => days.includes(day));
-      const horizonHit = psy.nearestDays <= horizonLimit(quiz.horizon);
-      const scheduleHit = timeHit && daysHit && horizonHit;
-      const genderHit = quiz.gender === "any" || psy.gender === quiz.gender;
+      const personHit =
+        (quiz.gender === "any" || psy.gender === quiz.gender) && ageFits(psy, quiz.age);
+      const priceHit = budgetFits(psy, quiz.budget);
 
-      if (!languageHit || !formatHit) {
-        return {
-          ...psy,
-          queue: 4 as const,
-          reason: "Широкий профиль: язык или формат не совпали полностью",
-        };
+      let queue: MatchResult["queue"] = 4;
+      let reason = "Работает с похожими запросами";
+      if (formatHit && topicHit && personHit && priceHit) {
+        queue = 1;
+        reason = "Совпали запрос и все пожелания";
+      } else if (formatHit && topicHit && personHit) {
+        queue = 2;
+        reason = `Подходит по запросу, но сессия дороже — ${psy.price.toLocaleString("ru-RU")} ₽`;
+      } else if (formatHit && topicHit) {
+        queue = 3;
+        reason = "Специалист по вашей теме, но пол или возраст другие";
+      } else if (!formatHit) {
+        reason = "Не работает в выбранном формате";
       }
-
-      if (topicHit && scheduleHit && genderHit) {
-        return {
-          ...psy,
-          queue: 1 as const,
-          reason: "Идеальный мэтч: запрос, период и фильтры совпали",
-        };
-      }
-
-      if (topicHit && genderHit && !scheduleHit) {
-        return {
-          ...psy,
-          queue: 2 as const,
-          reason: "Подходит по запросу, но свободные окна в другой период",
-        };
-      }
-
-      if (topicHit && scheduleHit && !genderHit) {
-        return {
-          ...psy,
-          queue: 3 as const,
-          reason: "Эксперт по теме и удобному периоду, но другие личные фильтры",
-        };
-      }
-
-      return {
-        ...psy,
-        queue: 4 as const,
-        reason: "Резервная выдача: общий профиль",
-      };
+      return { item: { ...psy, queue, reason } as MatchResult, overlap };
     })
-    .sort((a, b) => a.queue - b.queue || b.rating - a.rating);
+    .sort(
+      (a, b) =>
+        a.item.queue - b.item.queue || b.overlap - a.overlap || b.item.rating - a.item.rating,
+    )
+    .map(({ item }) => item);
 }

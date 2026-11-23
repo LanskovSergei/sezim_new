@@ -129,3 +129,18 @@ export function bookingDays(psy: Psychologist, now = new Date()): Date[] {
   const first = startOfDay(addDays(now, Math.max(psy.nearestDays, 0)));
   return Array.from({ length: DAYS_AHEAD }, (_, i) => addDays(first, i));
 }
+
+/** Горящее окно: начинается в ближайшие 48 часов и ещё не занято. */
+export const HOT_WINDOW_HOURS = 48;
+/** Скидка на горящее окно. */
+export const HOT_DISCOUNT = 0.15;
+
+export function isHot(startsAt: string, now = new Date()): boolean {
+  const hours = (new Date(startsAt).getTime() - now.getTime()) / 3_600_000;
+  return hours >= 0 && hours <= HOT_WINDOW_HOURS;
+}
+
+/** Цена сессии с учётом скидки за горящее окно, округлённая до 10 ₽. */
+export function slotPrice(price: number, startsAt: string, now = new Date()): number {
+  return isHot(startsAt, now) ? Math.round((price * (1 - HOT_DISCOUNT)) / 10) * 10 : price;
+}

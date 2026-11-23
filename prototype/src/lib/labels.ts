@@ -1,18 +1,19 @@
 import type {
+  AgeBand,
   AuthProvider,
-  DayPart,
+  Budget,
   Format,
   Gender,
-  Horizon,
   Language,
+  OtpChannel,
   PaymentMethod,
   Quiz,
-  TimeOfDay,
   User,
 } from "../types";
 
 export type ExternalProvider = Exclude<AuthProvider, "phone">;
 
+/** Оставили самые частые способы входа; остальные — после пилота, по статистике. */
 export const PROVIDERS: {
   id: ExternalProvider;
   label: string;
@@ -23,55 +24,64 @@ export const PROVIDERS: {
   { id: "google", label: "Google", mark: "G", color: "#4285f4" },
   { id: "apple", label: "Apple", mark: "A", color: "#111111" },
   { id: "telegram", label: "Telegram", mark: "T", color: "#229ed9" },
-  { id: "whatsapp", label: "WhatsApp", mark: "W", color: "#25d366", darkMark: true },
-  { id: "yandex", label: "Яндекс ID", mark: "Я", color: "#fc3f1d" },
-  { id: "vk", label: "VK ID", mark: "VK", color: "#0077ff" },
-  { id: "tid", label: "T-ID", mark: "Т", color: "#ffdd2d", darkMark: true },
-  { id: "sber", label: "Сбер ID", mark: "С", color: "#21a038" },
 ];
 
-export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
-  rf_card: "Карта РФ",
-  cis_card: "Карта СНГ (Kaspi, Payme)",
-  crypto: "USDT / USDC",
+export const OTP_CHANNELS: Record<OtpChannel, string> = {
+  whatsapp: "WhatsApp",
+  telegram: "Telegram",
+  sms: "SMS",
 };
 
-const FORMAT_LABELS: Record<Format, string> = {
+/** Способы оплаты: карту выбирают по стране банка, от неё зависит эквайер. */
+export const PAYMENT_OPTIONS: { id: PaymentMethod; label: string; hint: string }[] = [
+  { id: "rf_card", label: "Карта российского банка", hint: "Мир, Visa, Mastercard · СБП" },
+  { id: "cis_card", label: "Карта банка СНГ", hint: "Kaspi, Halyk, Humo, Uzcard, Элкарт" },
+  { id: "world_card", label: "Любая другая карта", hint: "Visa, Mastercard из любой страны" },
+  { id: "crypto", label: "Криптовалюта", hint: "USDT, USDC" },
+];
+
+export const PAYMENT_LABELS = Object.fromEntries(
+  PAYMENT_OPTIONS.map((p) => [p.id, p.label]),
+) as Record<PaymentMethod, string>;
+
+export const FORMAT_LABELS: Record<Format, string> = {
   individual: "Индивидуальная терапия",
   couple: "Парная / семейная терапия",
   teen: "Детский и подростковый формат",
 };
 
-const LANGUAGE_LABELS: Record<Language, string> = {
+export const LANGUAGE_LABELS: Record<Language, string> = {
   ru: "Русский",
   kz: "Қазақша",
   tr: "Türkçe",
 };
 
-const TIME_LABELS: Record<TimeOfDay, string> = {
-  morning: "утро",
-  afternoon: "день",
-  evening: "вечер",
-};
+export const GENDER_OPTIONS: [Gender, string][] = [
+  ["any", "Не важно"],
+  ["female", "Женщина"],
+  ["male", "Мужчина"],
+];
 
-const DAY_LABELS: Record<DayPart, string> = {
-  weekdays: "будни",
-  weekends: "выходные",
-};
+export const AGE_OPTIONS: [AgeBand, string][] = [
+  ["any", "Не важно"],
+  ["under35", "До 35"],
+  ["35to45", "35–45"],
+  ["over45", "Старше 45"],
+];
 
-const HORIZON_LABELS: Record<Horizon, string> = {
-  week: "на этой неделе",
-  two_weeks: "в течение 2 недель",
-  month: "в течение месяца",
-};
+export const BUDGET_OPTIONS: [Budget, string][] = [
+  ["any", "Не важно"],
+  [3000, "до 3 000 ₽"],
+  [3500, "до 3 500 ₽"],
+  [4000, "до 4 000 ₽"],
+];
 
-const GENDER_LABELS: Record<Gender, string> = {
-  any: "не важно",
-  female: "женщина",
-  male: "мужчина",
-};
+function optionLabel<T>(options: [T, string][], value: T): string {
+  return options.find(([id]) => id === value)?.[1] ?? String(value);
+}
 
 export function userLabel(user: User): string {
+  if (user.ownerPsychologistId) return "Клиентский аккаунт психолога";
   if (user.provider === "phone") return `+7 ${user.identity}`;
   const provider = PROVIDERS.find((p) => p.id === user.provider);
   return `${provider?.label ?? user.provider} · демо-аккаунт`;
@@ -79,15 +89,12 @@ export function userLabel(user: User): string {
 
 /** Ответы анкеты в виде пар «вопрос — ответ» для профиля. */
 export function quizSummary(quiz: Quiz): [string, string][] {
-  const times = quiz.times.map((t) => TIME_LABELS[t]).join(", ");
-  const days = quiz.days.map((d) => DAY_LABELS[d]).join(", ");
   return [
     ["Формат", FORMAT_LABELS[quiz.format]],
     ["Темы", quiz.topics.length > 0 ? quiz.topics.join(", ") : "не выбраны"],
-    ["Язык", quiz.languages.map((l) => LANGUAGE_LABELS[l]).join(", ")],
-    ["Время", `${times}; ${days}`],
-    ["Первая сессия", HORIZON_LABELS[quiz.horizon]],
-    ["Пол специалиста", GENDER_LABELS[quiz.gender]],
+    ["Пол специалиста", optionLabel(GENDER_OPTIONS, quiz.gender).toLowerCase()],
+    ["Возраст специалиста", optionLabel(AGE_OPTIONS, quiz.age).toLowerCase()],
+    ["Комфортная цена", optionLabel(BUDGET_OPTIONS, quiz.budget).toLowerCase()],
   ];
 }
 
@@ -101,4 +108,17 @@ export function formatDay(iso: string): string {
 
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Русское склонение после числа: plural(5, ["отзыв", "отзыва", "отзывов"]). */
+export function plural(n: number, forms: [string, string, string]): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+  return forms[2];
+}
+
+export function years(n: number): string {
+  return `${n} ${plural(n, ["год", "года", "лет"])}`;
 }

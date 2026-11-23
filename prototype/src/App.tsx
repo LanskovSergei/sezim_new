@@ -7,24 +7,31 @@ import { SlotPicker } from "./screens/SlotPicker";
 import { VideoRoom } from "./screens/VideoRoom";
 import { Avatar } from "./components/Avatar";
 import { BookingCard } from "./components/BookingCard";
-import { TOPICS, psychologists } from "./data/psychologists";
+import { PsyCard } from "./components/PsyCard";
+import { TOPIC_GROUPS, UNSURE, psychologists } from "./data/psychologists";
 import { api } from "./api/client";
-import { PAYMENT_LABELS, PROVIDERS, formatMoney } from "./lib/labels";
+import {
+  AGE_OPTIONS,
+  BUDGET_OPTIONS,
+  GENDER_OPTIONS,
+  OTP_CHANNELS,
+  PAYMENT_OPTIONS,
+  PROVIDERS,
+  formatMoney,
+} from "./lib/labels";
 import type { ExternalProvider } from "./lib/labels";
-import { nearestSlot } from "./lib/slot";
+import { HOT_DISCOUNT, slotPrice } from "./lib/availability";
+import { interpretTopics } from "./lib/interpret";
+import { hotSlots, nearestSlot } from "./lib/slot";
 import type {
   Booking,
-  DayPart,
   Format,
-  Gender,
-  Horizon,
-  Language,
   MatchResult,
+  OtpChannel,
   PaymentMethod,
   Psychologist,
   Quiz,
   Slot,
-  TimeOfDay,
   User,
 } from "./types";
 
@@ -40,9 +47,11 @@ type Step =
   | "slot"
   | "checkout"
   | "paid"
+  | "addPhone"
   | "cabinet"
   | "reschedule"
   | "video"
+  | "therapistLogin"
   | "therapist";
 
 /** Кто и с кем входит в видеокомнату. */
@@ -52,17 +61,27 @@ type Room = {
   peerName: string;
 };
 
+/** Горящее окно конкретного психолога для полосы над подборкой. */
+type HotOffer = { psy: Psychologist; slot: Slot };
+
 const FIRST_SESSION_DISCOUNT = 500;
 const DEMO_PHONE = "9001234567";
+const MAX_TOPICS = 5;
+
+const QUEUE_TITLES: Record<number, string> = {
+  1: "Лучшее совпадение",
+  2: "Чуть дороже комфортной цены",
+  3: "Специалисты по вашей теме",
+  4: "Тоже могут помочь",
+};
 
 const emptyQuiz: Quiz = {
   format: "individual",
   topics: [],
-  languages: ["ru"],
-  times: ["evening"],
-  days: ["weekdays"],
-  horizon: "two_weeks",
+  story: "",
   gender: "any",
+  age: "any",
+  budget: "any",
 };
 
 export default function App() {
@@ -72,8 +91,16 @@ export default function App() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState(["", "", "", ""]);
   const [otpHint, setOtpHint] = useState("1111");
+  const [otpChannel, setOtpChannel] = useState<OtpChannel>("whatsapp");
+  const [otpNext, setOtpNext] = useState<OtpChannel | null>(null);
+  /** Привязка телефона после входа через Google/Apple: код уже отправлен. */
+  const [attachSent, setAttachSent] = useState(false);
   const [error, setError] = useState("");
   const [matches, setMatches] = useState<MatchResult[]>([]);
+  /** Темы, распознанные из текста «своими словами», ждут подтверждения. */
+  const [guess, setGuess] = useState<string[] | null>(null);
+  /** Текст уже разобран и темы отмечены — кнопку «Подобрать темы» прячем. */
+  const [storyChecked, setStoryChecked] = useState(false);
   const [selected, setSelected] = useState<Psychologist | null>(null);
   const [slot, setSlot] = useState<Slot | null>(null);
   const [method, setMethod] = useState<PaymentMethod>("rf_card");
@@ -85,15 +112,22 @@ export default function App() {
   const [fromCabinet, setFromCabinet] = useState(false);
   /** Ближайшее свободное окно каждого психолога из подборки. */
   const [nearest, setNearest] = useState<Record<string, Slot | null>>({});
+  const [hot, setHot] = useState<HotOffer[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [slotError, setSlotError] = useState("");
   const [rescheduling, setRescheduling] = useState<Booking | null>(null);
   const [notice, setNotice] = useState("");
   const [room, setRoom] = useState<Room | null>(null);
   const [therapist, setTherapist] = useState<Psychologist | null>(null);
   /** Откуда пришли в каталог и к выбору времени — туда же ведёт «Назад». */
-  const [catalogBack, setCatalogBack] = useState<"landing" | "matches">("landing");
-  const [slotBack, setSlotBack] = useState<"matches" | "catalog">("matches");
+  const [catalogBack, setCatalogBack] = useState<"landing" | "matches" | "cabinet">("landing");
+  const [catalogFavOnly, setCatalogFavOnly] = useState(false);
+  const [slotBack, setSlotBack] = useState<"matches" | "catalog" | "cabinet">("matches");
   const [paying, setPaying] = useState(false);
+
+  useEffect(() => {
+    api.favorites().then(setFavorites);
+  }, []);
 
   useEffect(() => {
     if (step !== "matches") return;
@@ -101,28 +135,43 @@ export default function App() {
     Promise.all(
       matches.map(async (psy) => {
         const [taken, schedule] = await Promise.all([api.takenSlots(psy.id), api.schedule(psy.id)]);
-        return [psy.id, nearestSlot(psy, quiz, taken, schedule)] as const;
+        return {
+          psy,
+          nearest: nearestSlot(psy, taken, schedule),
+          hot: hotSlots(psy, taken, schedule),
+        };
       }),
-    ).then((pairs) => {
-      if (active) setNearest(Object.fromEntries(pairs));
+    ).then((rows) => {
+      if (!active) return;
+      setNearest(Object.fromEntries(rows.map((r) => [r.psy.id, r.nearest])));
+      setHot(
+        rows
+          .filter((r) => r.psy.queue < 4 && r.hot.length > 0)
+          .map((r) => ({ psy: r.psy, slot: r.hot[0] }))
+          .sort((a, b) => a.slot.startsAt.localeCompare(b.slot.startsAt)),
+      );
     });
     return () => {
       active = false;
     };
-  }, [step, matches, quiz]);
+  }, [step, matches]);
 
   const fromQuiz = matches.length > 0;
   const discount = bookings.length === 0 ? FIRST_SESSION_DISCOUNT : 0;
 
   const grouped = useMemo(() => {
+    const best = matches.filter((m) => m.queue < 4);
+    const list = best.length > 0 ? best : matches.slice(0, 3);
     const map = new Map<number, MatchResult[]>();
-    for (const item of matches) {
-      const list = map.get(item.queue) ?? [];
-      list.push(item);
-      map.set(item.queue, list);
+    for (const item of list) {
+      map.set(item.queue, [...(map.get(item.queue) ?? []), item]);
     }
     return [...map.entries()];
   }, [matches]);
+
+  async function toggleFavorite(id: string) {
+    setFavorites(await api.toggleFavorite(id));
+  }
 
   async function finishQuiz() {
     const list = await api.match(quiz);
@@ -158,30 +207,62 @@ export default function App() {
     setStep("cabinet");
   }
 
-  async function sendCode() {
+  function pickPsychologist(psy: Psychologist, back: "matches" | "catalog" | "cabinet") {
+    setSelected(psy);
+    setSlot(null);
+    setSlotError("");
+    setSlotBack(back);
+    setStep("slot");
+  }
+
+  function digits(): string {
+    return phone.replace(/\D/g, "");
+  }
+
+  async function sendCode(after: OtpChannel | null = null) {
     setError("");
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length < 10) {
+    if (digits().length < 10) {
       setError("Введите номер телефона");
-      return;
+      return false;
     }
-    const res = await api.requestCode(digits);
+    const res = await api.requestCode(digits(), after);
     setOtpHint(res.hint);
-    setStep("otp");
+    setOtpChannel(res.channel);
+    setOtpNext(res.next);
+    setOtp(["", "", "", ""]);
+    return true;
   }
 
   async function verify() {
     setError("");
     try {
-      await enter(await api.verify(phone.replace(/\D/g, ""), otp.join("")));
+      await enter(await api.verify(digits(), otp.join("")));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка входа");
+    }
+  }
+
+  async function attachPhone() {
+    if (!user) return;
+    setError("");
+    try {
+      setUser(await api.attachPhone(user.id, digits(), otp.join("")));
+      setAttachSent(false);
+      setOtp(["", "", "", ""]);
+      setNotice("Телефон подтверждён. Код больше не понадобится.");
+      openCabinet();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось подтвердить");
     }
   }
 
   async function loginWith(provider: ExternalProvider) {
     await enter(await api.loginWithProvider(provider));
   }
+
+  const price = selected && slot ? slotPrice(selected.price, slot.startsAt) : 0;
+  const hotDiscount = selected && slot ? selected.price - price : 0;
+  const total = Math.max(price - discount, 0);
 
   async function pay() {
     if (!selected || !slot) return;
@@ -196,14 +277,14 @@ export default function App() {
     let booking: Booking;
     try {
       booking = await api.checkout({
-      userId: user.id,
-      psychologistId: selected.id,
-      psychologistName: selected.name,
-      slotLabel: slot.label,
-      startsAt: slot.startsAt,
-      amount: selected.price - discount,
-      method,
-    });
+        userId: user.id,
+        psychologistId: selected.id,
+        psychologistName: selected.name,
+        slotLabel: slot.label,
+        startsAt: slot.startsAt,
+        amount: total,
+        method,
+      });
     } catch (e) {
       setSlotError(e instanceof Error ? e.message : "Не удалось оплатить");
       setStep("slot");
@@ -212,6 +293,18 @@ export default function App() {
     setBookings(await api.bookings(user.id));
     setPaidBooking(booking);
     setStep("paid");
+  }
+
+  /** После первой покупки просим телефон, если вошли через Google, Apple или Telegram. */
+  function afterPaid() {
+    if (user && !user.phone && !user.ownerPsychologistId) {
+      setPhone("");
+      setAttachSent(false);
+      setError("");
+      setStep("addPhone");
+    } else {
+      openCabinet();
+    }
   }
 
   async function cancelBooking(booking: Booking) {
@@ -242,6 +335,18 @@ export default function App() {
   async function enterTherapist() {
     setTherapist(await api.loginAsPsychologist());
     setStep("therapist");
+  }
+
+  /** Психолог открывает свой клиентский субаккаунт. */
+  async function openClientAccount() {
+    if (!therapist) return;
+    const next = await api.clientAccountFor(therapist);
+    setUser(next);
+    setBookings(await api.bookings(next.id));
+    setMatches([]);
+    setSavedQuiz(await api.quiz(next.id));
+    setNotice("Вы в клиентском аккаунте. Вернуться к работе — в «Профиле».");
+    openCabinet();
   }
 
   function exitRoom() {
@@ -275,6 +380,7 @@ export default function App() {
     setTherapist(null);
     setRoom(null);
     setRescheduling(null);
+    setGuess(null);
     setStep("landing");
   }
 
@@ -286,16 +392,22 @@ export default function App() {
   /** Режим показа: всё стереть и вернуться на главную. */
   async function resetDemo() {
     await api.resetDemo();
+    setFavorites([]);
     clearSession();
   }
 
   /** Режим показа: войти клиентом с заполненной анкетой и сразу открыть подборку. */
   async function demoClient() {
-    const demoQuiz: Quiz = { ...emptyQuiz, topics: ["Тревога и страхи", "Апатия и выгорание"] };
+    const demoQuiz: Quiz = {
+      ...emptyQuiz,
+      topics: ["Тревога и страхи", "Апатия и выгорание", "Нарушения сна"],
+      budget: 4000,
+    };
     const list = await api.match(demoQuiz);
     await api.requestCode(DEMO_PHONE);
     const next = await api.verify(DEMO_PHONE, "1111");
     await api.saveQuiz(next.id, demoQuiz);
+    if ((await api.moods(next.id)).length === 0) await api.seedDemoMoods(next.id);
     setQuiz(demoQuiz);
     setSavedQuiz(demoQuiz);
     setMatches(list);
@@ -314,6 +426,47 @@ export default function App() {
     await enterTherapist();
   }
 
+  function toggleTopic(topic: string) {
+    const on = quiz.topics.includes(topic);
+    let next: string[];
+    if (topic === UNSURE) next = on ? [] : [UNSURE];
+    else if (on) next = quiz.topics.filter((t) => t !== topic);
+    else next = [...quiz.topics.filter((t) => t !== UNSURE), topic].slice(0, MAX_TOPICS);
+    setQuiz({ ...quiz, topics: next });
+  }
+
+  const otpInputs = (
+    <div className="otp">
+      {otp.map((d, i) => (
+        <input
+          key={i}
+          value={d}
+          inputMode="numeric"
+          maxLength={1}
+          aria-label={`Цифра ${i + 1}`}
+          onChange={(e) => {
+            const next = [...otp];
+            next[i] = e.target.value.replace(/\D/g, "").slice(-1);
+            setOtp(next);
+          }}
+        />
+      ))}
+    </div>
+  );
+
+  const phoneInput = (
+    <div className="phone-input">
+      <span>+7</span>
+      <input
+        value={phone}
+        inputMode="tel"
+        aria-label="Номер телефона"
+        onChange={(e) => setPhone(e.target.value)}
+        placeholder="900 123 45 67"
+      />
+    </div>
+  );
+
   return (
     <div className="app-shell">
       <DemoPanel
@@ -331,18 +484,19 @@ export default function App() {
       <div className={`phone ${["cabinet", "therapist", "video"].includes(step) ? "fit" : ""}`}>
         {step === "landing" && (
           <div className="screen landing">
-            <span className="eyebrow">Онлайн-психологи · RU · KZ · TR</span>
-            <h1>Психолог, который свободен, когда удобно вам</h1>
+            <span className="eyebrow">Онлайн-психологи · RU · KZ · UZ · KG · AZ · TR</span>
+            <h1>Подберём психолога под ваш запрос</h1>
             <p>
-              Ответьте на 3 вопроса — покажем специалистов, которые подходят по запросу и
-              свободны в удобное вам время. Сессии по видео прямо на сайте.
+              Ответьте на 3 вопроса — покажем подходящих специалистов. Время выберете прямо в
+              календаре психолога, сессии — по видео на сайте.
             </p>
             <ul className="perks">
-              <li>{psychologists.length} специалистов с проверенными дипломами</li>
+              <li>{psychologists.length} специалистов с проверенными дипломами и отзывами</li>
               <li>
                 Сессия от {formatMoney(Math.min(...psychologists.map((p) => p.price)))}, первая —
                 со скидкой {formatMoney(FIRST_SESSION_DISCOUNT)}
               </li>
+              <li>Горящие окна на ближайшие 48 часов — ещё −{HOT_DISCOUNT * 100}%</li>
               <li>Перенос и отмена бесплатно за 24 часа</li>
             </ul>
             <button className="btn" onClick={() => setStep("quiz1")}>
@@ -353,6 +507,7 @@ export default function App() {
               style={{ marginTop: 10 }}
               onClick={() => {
                 setCatalogBack("landing");
+                setCatalogFavOnly(false);
                 setStep("catalog");
               }}
             >
@@ -361,7 +516,7 @@ export default function App() {
             <button className="link-btn" style={{ marginTop: 14 }} onClick={() => setStep("auth")}>
               Уже есть аккаунт — войти
             </button>
-            <button className="therapist-entry mt-auto" onClick={enterTherapist}>
+            <button className="therapist-entry mt-auto" onClick={() => setStep("therapistLogin")}>
               <strong>Я психолог</strong>
               <span className="hint">Кабинет специалиста: расписание, клиенты, выплаты</span>
             </button>
@@ -370,26 +525,28 @@ export default function App() {
 
         {step === "catalog" && (
           <Catalog
-            quiz={quiz}
-            backLabel={catalogBack === "matches" ? "К подборке" : "На главную"}
-            onBack={() => setStep(catalogBack)}
-            onPick={(psy) => {
-              setSelected(psy);
-              setSlot(null);
-              setSlotError("");
-              setSlotBack("catalog");
-              setStep("slot");
-            }}
+            key={`${catalogBack}-${catalogFavOnly}`}
+            quiz={savedQuiz}
+            favorites={favorites}
+            onFavorite={toggleFavorite}
+            onlyFavorites={catalogFavOnly}
+            backLabel={
+              catalogBack === "matches"
+                ? "К подборке"
+                : catalogBack === "cabinet"
+                  ? "В личный кабинет"
+                  : "На главную"
+            }
+            onBack={() => (catalogBack === "cabinet" ? openCabinet() : setStep(catalogBack))}
+            onPick={(psy) => pickPsychologist(psy, "catalog")}
           />
         )}
 
         {step === "quiz1" && (
           <div className="screen">
-            {fromCabinet && (
-              <button className="back" onClick={openCabinet}>
-                ← В личный кабинет
-              </button>
-            )}
+            <button className="back" onClick={fromCabinet ? openCabinet : () => setStep("landing")}>
+              ← {fromCabinet ? "В личный кабинет" : "На главную"}
+            </button>
             <Progress n={1} />
             <h2>Для кого ищем специалиста?</h2>
             {(
@@ -415,33 +572,100 @@ export default function App() {
         )}
 
         {step === "quiz2" && (
-          <div className="screen">
+          <div className="screen" style={{ overflowY: "auto" }}>
             <button className="back" onClick={() => setStep("quiz1")}>
               ← Назад
             </button>
             <Progress n={2} />
             <h2>Что вас сейчас беспокоит?</h2>
-            <p>Выберите 1–3 темы. Можно пропустить.</p>
+            <p>Выберите до {MAX_TOPICS} тем или опишите своими словами.</p>
+
+            <label className="story">
+              <span className="hint">Своими словами</span>
+              <textarea
+                rows={3}
+                value={quiz.story}
+                placeholder="Например: тяжело засыпать, постоянно переживаю из-за работы"
+                onChange={(e) => {
+                  setQuiz({ ...quiz, story: e.target.value });
+                  setGuess(null);
+                  setStoryChecked(false);
+                }}
+              />
+            </label>
+            {quiz.story.trim().length > 0 && guess === null && !storyChecked && (
+              <button
+                className="btn secondary small"
+                style={{ alignSelf: "flex-start", marginBottom: 14 }}
+                onClick={() => setGuess(interpretTopics(quiz.story))}
+              >
+                Подобрать темы по тексту
+              </button>
+            )}
+            {guess !== null && (
+              <div className="notice guess">
+                {guess.length === 0 ? (
+                  <span className="grow">
+                    Не получилось распознать тему. Выберите её ниже или «{UNSURE}» — психолог
+                    разберётся на первой встрече.
+                  </span>
+                ) : (
+                  <div className="grow">
+                    <div>
+                      Правильно ли мы поняли, что вас беспокоит:{" "}
+                      <strong>{guess.join(", ").toLowerCase()}</strong>?
+                    </div>
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <button
+                        className="btn small"
+                        onClick={() => {
+                          const merged = [
+                            ...quiz.topics.filter((t) => t !== UNSURE),
+                            ...guess.filter((g) => !quiz.topics.includes(g)),
+                          ].slice(0, MAX_TOPICS);
+                          setQuiz({ ...quiz, topics: merged });
+                          setGuess(null);
+                          setStoryChecked(true);
+                        }}
+                      >
+                        Да, отметить
+                      </button>
+                      <button className="btn secondary small" onClick={() => setGuess(null)}>
+                        Нет, выберу сам
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {TOPIC_GROUPS.map((group) => (
+              <div key={group.title}>
+                <div className="queue-title" style={{ marginTop: 6 }}>
+                  {group.title}
+                </div>
+                <div className="chips" style={{ marginBottom: 8 }}>
+                  {group.topics.map((topic) => (
+                    <button
+                      key={topic}
+                      className={`chip ${quiz.topics.includes(topic) ? "on" : ""}`}
+                      aria-pressed={quiz.topics.includes(topic)}
+                      onClick={() => toggleTopic(topic)}
+                    >
+                      {topic}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
             <div className="chips">
-              {TOPICS.map((topic) => {
-                const on = quiz.topics.includes(topic);
-                return (
-                  <button
-                    key={topic}
-                    className={`chip ${on ? "on" : ""}`}
-                    onClick={() => {
-                      const next = on
-                        ? quiz.topics.filter((t) => t !== topic)
-                        : quiz.topics.length >= 3
-                          ? quiz.topics
-                          : [...quiz.topics, topic];
-                      setQuiz({ ...quiz, topics: next });
-                    }}
-                  >
-                    {topic}
-                  </button>
-                );
-              })}
+              <button
+                className={`chip ${quiz.topics.includes(UNSURE) ? "on" : ""}`}
+                aria-pressed={quiz.topics.includes(UNSURE)}
+                onClick={() => toggleTopic(UNSURE)}
+              >
+                {UNSURE}
+              </button>
             </div>
             <button className="btn mt-auto" onClick={() => setStep("quiz3")}>
               Продолжить
@@ -455,123 +679,26 @@ export default function App() {
               ← Назад
             </button>
             <Progress n={3} />
-            <h2>Организационные моменты</h2>
-            <p>Язык консультации — можно выбрать несколько</p>
-            <div className="row">
-              {(
-                [
-                  ["ru", "Русский"],
-                  ["kz", "Қазақша"],
-                  ["tr", "Türkçe"],
-                ] as [Language, string][]
-              ).map(([id, label]) => {
-                const on = quiz.languages.includes(id);
-                return (
-                  <button
-                    key={id}
-                    className={`choice grow ${on ? "on" : ""}`}
-                    onClick={() => {
-                      const next = on
-                        ? quiz.languages.filter((lang) => lang !== id)
-                        : [...quiz.languages, id];
-                      if (next.length === 0) return;
-                      setQuiz({ ...quiz, languages: next });
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            <p>Удобное время суток — можно выбрать несколько</p>
-            <div className="row wrap">
-              {(
-                [
-                  ["morning", "Утро 8–12"],
-                  ["afternoon", "День 12–17"],
-                  ["evening", "Вечер 17–22"],
-                ] as [TimeOfDay, string][]
-              ).map(([id, label]) => {
-                const on = quiz.times.includes(id);
-                return (
-                  <button
-                    key={id}
-                    className={`choice grow ${on ? "on" : ""}`}
-                    onClick={() => {
-                      const next = on
-                        ? quiz.times.filter((t) => t !== id)
-                        : [...quiz.times, id];
-                      if (next.length === 0) return;
-                      setQuiz({ ...quiz, times: next });
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            <p>Дни</p>
-            <div className="row">
-              {(
-                [
-                  ["weekdays", "Будни"],
-                  ["weekends", "Выходные"],
-                ] as [DayPart, string][]
-              ).map(([id, label]) => {
-                const on = quiz.days.includes(id);
-                return (
-                  <button
-                    key={id}
-                    className={`choice grow ${on ? "on" : ""}`}
-                    onClick={() => {
-                      const next = on
-                        ? quiz.days.filter((d) => d !== id)
-                        : [...quiz.days, id];
-                      if (next.length === 0) return;
-                      setQuiz({ ...quiz, days: next });
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            <p>Период, когда нужна первая сессия</p>
-            <div className="row wrap">
-              {(
-                [
-                  ["week", "Эта неделя"],
-                  ["two_weeks", "2 недели"],
-                  ["month", "В течение месяца"],
-                ] as [Horizon, string][]
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  className={`choice grow ${quiz.horizon === id ? "on" : ""}`}
-                  onClick={() => setQuiz({ ...quiz, horizon: id })}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <p>Пол специалиста</p>
-            <div className="row">
-              {(
-                [
-                  ["any", "Не важно"],
-                  ["female", "Женщина"],
-                  ["male", "Мужчина"],
-                ] as [Gender, string][]
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  className={`choice grow ${quiz.gender === id ? "on" : ""}`}
-                  onClick={() => setQuiz({ ...quiz, gender: id })}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <h2>С кем вам будет комфортнее?</h2>
+            <p>Метод работы, язык и образование можно уточнить потом в каталоге.</p>
+            <div className="queue-title">Пол специалиста</div>
+            <OptionRow
+              options={GENDER_OPTIONS}
+              value={quiz.gender}
+              onChange={(gender) => setQuiz({ ...quiz, gender })}
+            />
+            <div className="queue-title">Возраст специалиста</div>
+            <OptionRow
+              options={AGE_OPTIONS}
+              value={quiz.age}
+              onChange={(age) => setQuiz({ ...quiz, age })}
+            />
+            <div className="queue-title">Комфортная цена за сессию</div>
+            <OptionRow
+              options={BUDGET_OPTIONS}
+              value={quiz.budget}
+              onChange={(budget) => setQuiz({ ...quiz, budget })}
+            />
             <button className="btn mt-auto" onClick={finishQuiz}>
               Подобрать специалистов
             </button>
@@ -598,21 +725,23 @@ export default function App() {
             </h2>
             <p>
               {fromQuiz
-                ? `Мы нашли ${matches.length} специалистов. Войдите любым способом, чтобы увидеть подборку.`
-                : "Войдите любым удобным способом."}
+                ? `Мы нашли ${matches.filter((m) => m.queue < 4).length || matches.length} подходящих специалистов. Войдите, чтобы увидеть подборку.`
+                : "Войдите по номеру телефона или через Google, Apple, Telegram."}
             </p>
-            <div className="phone-input">
-              <span>+7</span>
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="900 123 45 67"
-              />
-            </div>
+            {phoneInput}
             {error && <p className="error">{error}</p>}
-            <button className="btn" onClick={sendCode}>
+            <button
+              className="btn"
+              onClick={async () => {
+                if (await sendCode()) setStep("otp");
+              }}
+            >
               Получить код
             </button>
+            <p className="hint" style={{ marginTop: 10 }}>
+              Код пришлём в WhatsApp или Telegram, если их нет — по SMS. Номер проверяем один
+              раз, дальше вход без кода.
+            </p>
             <div className="divider">или войти через</div>
             <div className="providers">
               {PROVIDERS.map((p) => (
@@ -629,8 +758,8 @@ export default function App() {
               ))}
             </div>
             <p className="hint" style={{ marginTop: 16 }}>
-              Кнопки сервисов в прототипе — заглушки: вход срабатывает сразу, без
-              перехода к провайдеру.
+              В прототипе вход через сервисы срабатывает сразу. Телефон попросим после первой
+              оплаты — чтобы можно было восстановить доступ.
             </p>
           </div>
         )}
@@ -648,25 +777,61 @@ export default function App() {
             </button>
             <h2>Введите код</h2>
             <p>
-              Для прототипа код всегда {otpHint}. Потом это заменит реальный OTP API.
+              Отправили код в <strong>{OTP_CHANNELS[otpChannel]}</strong> на +7 {phone}. В
+              прототипе код всегда {otpHint}.
             </p>
-            <div className="otp">
-              {otp.map((d, i) => (
-                <input
-                  key={i}
-                  value={d}
-                  maxLength={1}
-                  onChange={(e) => {
-                    const next = [...otp];
-                    next[i] = e.target.value.replace(/\D/g, "").slice(-1);
-                    setOtp(next);
-                  }}
-                />
-              ))}
-            </div>
+            {otpInputs}
             {error && <p className="error">{error}</p>}
             <button className="btn" onClick={verify}>
               Войти
+            </button>
+            {otpNext && (
+              <button
+                className="link-btn"
+                style={{ marginTop: 14 }}
+                onClick={() => sendCode(otpChannel)}
+              >
+                Не пришёл? Отправить {otpNext === "sms" ? "по SMS" : `в ${OTP_CHANNELS[otpNext]}`}
+              </button>
+            )}
+          </div>
+        )}
+
+        {step === "addPhone" && user && (
+          <div className="screen">
+            <span className="eyebrow">Последний шаг</span>
+            <h2>Оставьте номер телефона</h2>
+            <p>
+              По нему восстановим доступ, если потеряете вход через{" "}
+              {PROVIDERS.find((p) => p.id === user.provider)?.label ?? "сервис"}, и напомним о
+              сессии. Подтвердим один раз.
+            </p>
+            {phoneInput}
+            {attachSent && (
+              <>
+                <p className="hint" style={{ marginBottom: 0 }}>
+                  Код отправлен в {OTP_CHANNELS[otpChannel]}. В прототипе — {otpHint}.
+                </p>
+                {otpInputs}
+              </>
+            )}
+            {error && <p className="error">{error}</p>}
+            {attachSent ? (
+              <button className="btn" onClick={attachPhone}>
+                Подтвердить
+              </button>
+            ) : (
+              <button
+                className="btn"
+                onClick={async () => {
+                  if (await sendCode()) setAttachSent(true);
+                }}
+              >
+                Получить код
+              </button>
+            )}
+            <button className="btn ghost mt-auto" onClick={openCabinet}>
+              Позже
             </button>
           </div>
         )}
@@ -681,85 +846,89 @@ export default function App() {
             <div className="header">
               <div>
                 <h2>Ваша подборка</h2>
-                <p className="hint">
-                  Подобрано по анкете. Выберите специалиста и оплатите сессию.
+                <p className="hint" style={{ marginBottom: 0 }}>
+                  Самые подходящие по анкете. Время выберете в календаре психолога.
                 </p>
               </div>
             </div>
-            <button
-              className="link-btn"
-              style={{ alignSelf: "flex-start", marginBottom: 4 }}
-              onClick={() => {
-                setCatalogBack("matches");
-                setStep("catalog");
-              }}
-            >
-              Смотреть всех специалистов →
-            </button>
-            {grouped.map(([queue, list]) => (
-              <div key={queue}>
-                <div className="queue-title">
-                  Очередь {queue}
-                  {queue === 1 && " · идеальный мэтч"}
-                  {queue === 2 && " · компромисс по времени"}
-                  {queue === 3 && " · компромисс по фильтрам"}
-                  {queue === 4 && " · широкий профиль"}
+
+            {hot.length > 0 && (
+              <>
+                <div className="queue-title hot-title">
+                  Горящие окна · −{HOT_DISCOUNT * 100}%
                 </div>
-                {list.map((psy) => (
-                  <div key={psy.id} className="card">
-                    <div className="row" style={{ alignItems: "center", marginBottom: 10 }}>
-                      <Avatar name={psy.name} src={psy.photo} />
-                      <div className="grow">
-                        <strong>{psy.name}</strong>
-                        <div className="hint">
-                          {psy.method} · {psy.experienceYears} лет опыта
-                        </div>
+                <div className="hot-strip">
+                  {hot.map(({ psy, slot: offer }) => (
+                    <div key={psy.id} className="hot-card">
+                      <div className="row" style={{ alignItems: "center" }}>
+                        <Avatar name={psy.name} src={psy.photo} size="small" />
+                        <strong className="grow">{psy.name}</strong>
                       </div>
-                    </div>
-                    {psy.queue > 1 && <div className="warn">{psy.reason}</div>}
-                    {psy.id in nearest && (
-                      <div className="hint" style={{ marginBottom: 8 }}>
-                        {nearest[psy.id]
-                          ? `Ближайшее окно: ${nearest[psy.id]!.label}`
-                          : "Свободных окон в ближайшие недели нет"}
-                      </div>
-                    )}
-                    {psy.topics.slice(0, 3).map((t) => (
-                      <span key={t} className="badge">
-                        {t}
+                      <span className="hint">{offer.label}</span>
+                      <span>
+                        <s className="hint">{formatMoney(psy.price)}</s>{" "}
+                        <strong className="hot-price">
+                          {formatMoney(slotPrice(psy.price, offer.startsAt))}
+                        </strong>
                       </span>
-                    ))}
-                    <div className="header" style={{ marginTop: 12, marginBottom: 0 }}>
-                      <strong>{psy.price.toLocaleString("ru-RU")} ₽</strong>
                       <button
-                        className="btn"
-                        style={{ width: "auto", padding: "8px 14px" }}
+                        className="btn small"
                         onClick={() => {
                           setSelected(psy);
-                          setSlot(null);
-                          setSlotError("");
+                          setSlot(offer);
                           setSlotBack("matches");
-                          setStep("slot");
+                          setStep("checkout");
                         }}
                       >
-                        Выбрать время
+                        Записаться
                       </button>
                     </div>
-                  </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {grouped.map(([queue, list]) => (
+              <div key={queue}>
+                <div className="queue-title">{QUEUE_TITLES[queue]}</div>
+                {list.map((psy) => (
+                  <PsyCard
+                    key={psy.id}
+                    psy={psy}
+                    reason={psy.queue > 1 ? psy.reason : undefined}
+                    highlight={quiz.topics}
+                    nearest={psy.id in nearest ? nearest[psy.id] : undefined}
+                    favorite={favorites.includes(psy.id)}
+                    onFavorite={() => toggleFavorite(psy.id)}
+                    onPick={() => pickPsychologist(psy, "matches")}
+                  />
                 ))}
               </div>
             ))}
+
+            <button
+              className="see-all"
+              onClick={() => {
+                setCatalogBack("matches");
+                setCatalogFavOnly(false);
+                setStep("catalog");
+              }}
+            >
+              <strong>Посмотреть всех специалистов</strong>
+              <span className="hint">
+                Каталог с фильтрами по языку, цене и методу, избранное и сравнение →
+              </span>
+            </button>
           </div>
         )}
 
         {step === "slot" && selected && (
           <SlotPicker
             psy={selected}
-            preferred={quiz.times}
             title="Выберите дату и время"
             actionLabel="Перейти к оплате"
             error={slotError}
-            onBack={() => setStep(slotBack)}
+            onBack={() => (slotBack === "cabinet" ? openCabinet() : setStep(slotBack))}
             onPick={(next) => {
               setSlot(next);
               setSlotError("");
@@ -771,9 +940,9 @@ export default function App() {
         {step === "reschedule" && rescheduling && (
           <SlotPicker
             psy={psychologists.find((p) => p.id === rescheduling.psychologistId)!}
-            preferred={quiz.times}
             title="Перенос сессии"
             actionLabel="Перенести сюда"
+            showPrice={false}
             current={rescheduling.startsAt}
             error={slotError}
             onBack={() => {
@@ -795,10 +964,35 @@ export default function App() {
           />
         )}
 
+        {step === "therapistLogin" && (
+          <div className="screen">
+            <button className="back" onClick={() => setStep("landing")}>
+              ← На главную
+            </button>
+            <h2>Вход для психологов</h2>
+            <p>
+              Аккаунт психолога открывает платформа после проверки дипломов — по приглашению.
+              Самостоятельной регистрации специалистов нет.
+            </p>
+            <div className="card static">
+              <div className="hint">Приглашение для демо</div>
+              <strong>Анна Смирнова · КПТ, гештальт</strong>
+            </div>
+            <button className="btn" onClick={enterTherapist}>
+              Войти по приглашению
+            </button>
+            <p className="hint" style={{ marginTop: 14 }}>
+              Хотите пройти терапию сами? В кабинете психолога есть отдельный клиентский
+              аккаунт — под тем же входом.
+            </p>
+          </div>
+        )}
+
         {step === "therapist" && therapist && (
           <PsychologistCabinet
             psy={therapist}
             onLogout={logout}
+            onClientAccount={openClientAccount}
             onEnterRoom={(booking, peerName) => {
               setRoom({ booking, role: "psychologist", peerName });
               setStep("video");
@@ -807,7 +1001,7 @@ export default function App() {
         )}
 
         {step === "checkout" && selected && slot && (
-          <div className="screen">
+          <div className="screen" style={{ overflowY: "auto" }}>
             <button className="back" onClick={() => setStep("slot")}>
               ← Изменить время
             </button>
@@ -815,38 +1009,50 @@ export default function App() {
             <p>
               {selected.name} · {slot.label}
             </p>
-            {(Object.entries(PAYMENT_LABELS) as [PaymentMethod, string][]).map(
-              ([id, label]) => (
-                <button
-                  key={id}
-                  className={`choice pay-option ${method === id ? "on" : ""}`}
-                  onClick={() => setMethod(id)}
-                >
-                  {label}
-                </button>
-              ),
-            )}
+            <div className="queue-title" style={{ marginTop: 0 }}>
+              Чем оплатить
+            </div>
+            {PAYMENT_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                className={`choice pay-option ${method === option.id ? "on" : ""}`}
+                aria-pressed={method === option.id}
+                onClick={() => setMethod(option.id)}
+              >
+                <strong>{option.label}</strong>
+                <div className="hint">{option.hint}</div>
+              </button>
+            ))}
             <div className="card static">
               <div className="header">
                 <span>Сессия 50 мин</span>
-                <span>{selected.price.toLocaleString("ru-RU")} ₽</span>
+                <span>{formatMoney(selected.price)}</span>
               </div>
+              {hotDiscount > 0 && (
+                <div className="header">
+                  <span>Горящее окно</span>
+                  <span className="hot-price">−{formatMoney(hotDiscount)}</span>
+                </div>
+              )}
               {discount > 0 && (
                 <div className="header">
                   <span>Скидка на первую</span>
-                  <span>−{discount} ₽</span>
+                  <span>−{formatMoney(discount)}</span>
                 </div>
               )}
               <div className="header" style={{ marginBottom: 0 }}>
                 <strong>Итого</strong>
-                <strong>{(selected.price - discount).toLocaleString("ru-RU")} ₽</strong>
+                <strong>{formatMoney(total)}</strong>
               </div>
             </div>
+            <p className="hint">
+              Отмена и перенос бесплатно, если до сессии больше 24 часов.
+            </p>
             <button className="btn mt-auto" onClick={pay} disabled={paying}>
               {paying
                 ? "Ждём подтверждения банка…"
                 : user
-                  ? `Оплатить ${formatMoney(selected.price - discount)}`
+                  ? `Оплатить ${formatMoney(total)}`
                   : "Войти и оплатить"}
             </button>
           </div>
@@ -857,7 +1063,7 @@ export default function App() {
             <h2>Сессия оплачена</h2>
             <p>Запись добавлена в личный кабинет.</p>
             <BookingCard booking={paidBooking} />
-            <button className="btn mt-auto" onClick={openCabinet}>
+            <button className="btn mt-auto" onClick={afterPaid}>
               Перейти в личный кабинет
             </button>
           </div>
@@ -868,9 +1074,27 @@ export default function App() {
             user={user}
             bookings={bookings}
             quiz={savedQuiz}
+            favorites={favorites}
+            onBookWith={(psy) => pickPsychologist(psy, "cabinet")}
             onFindPsychologist={() => {
               setFromCabinet(true);
               setStep(fromQuiz ? "matches" : "quiz1");
+            }}
+            onOpenFavorites={() => {
+              setCatalogBack("cabinet");
+              setCatalogFavOnly(true);
+              setStep("catalog");
+            }}
+            onAddPhone={() => {
+              setPhone("");
+              setAttachSent(false);
+              setError("");
+              setStep("addPhone");
+            }}
+            onSwitchToTherapist={() => {
+              setNotice("");
+              if (therapist) setStep("therapist");
+              else enterTherapist();
             }}
             onEditQuiz={() => {
               setFromCabinet(true);
@@ -902,6 +1126,33 @@ function Progress({ n }: { n: number }) {
     <div className="progress">
       {[1, 2, 3].map((i) => (
         <span key={i} className={i <= n ? "on" : ""} />
+      ))}
+    </div>
+  );
+}
+
+/** Ряд вариантов ответа, которые листаются по горизонтали. */
+function OptionRow<T extends string | number>({
+  options,
+  value,
+  onChange,
+}: {
+  options: [T, string][];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="option-row" role="radiogroup">
+      {options.map(([id, label]) => (
+        <button
+          key={String(id)}
+          role="radio"
+          aria-checked={value === id}
+          className={`choice ${value === id ? "on" : ""}`}
+          onClick={() => onChange(id)}
+        >
+          {label}
+        </button>
       ))}
     </div>
   );

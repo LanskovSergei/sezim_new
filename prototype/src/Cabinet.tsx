@@ -13,7 +13,7 @@ import {
   quizSummary,
   userLabel,
 } from "./lib/labels";
-import type { Booking, ChatMessage, Psychologist, Quiz, User } from "./types";
+import type { Booking, ChatMessage, MoodEntry, Psychologist, Quiz, User } from "./types";
 
 type Tab = "sessions" | "chats" | "payments" | "profile";
 
@@ -30,7 +30,15 @@ type Props = {
   bookings: Booking[];
   /** Анкета аккаунта; null, если пользователь её ещё не проходил. */
   quiz: Quiz | null;
+  favorites: string[];
+  /** Записаться к конкретному психологу: своему или из избранного. */
+  onBookWith: (psy: Psychologist) => void;
+  /** Подобрать другого психолога: подборка по анкете или анкета. */
   onFindPsychologist: () => void;
+  onOpenFavorites: () => void;
+  onAddPhone: () => void;
+  /** Для клиентского аккаунта психолога — вернуться в кабинет специалиста. */
+  onSwitchToTherapist: () => void;
   onEditQuiz: () => void;
   onUserChange: (user: User) => void;
   onLogout: () => void;
@@ -84,7 +92,12 @@ export function Cabinet({
   user,
   bookings,
   quiz,
+  favorites,
+  onBookWith,
   onFindPsychologist,
+  onOpenFavorites,
+  onAddPhone,
+  onSwitchToTherapist,
   onEditQuiz,
   onUserChange,
   onLogout,
@@ -179,6 +192,9 @@ export function Cabinet({
             notice={notice}
             onDismissNotice={onDismissNotice}
             onChat={openChat}
+            favorites={favorites}
+            onBookWith={onBookWith}
+            onOpenFavorites={onOpenFavorites}
             onFindPsychologist={onFindPsychologist}
             onCancel={onCancel}
             onReschedule={onReschedule}
@@ -199,6 +215,8 @@ export function Cabinet({
             quiz={quiz}
             onEditQuiz={onEditQuiz}
             onUserChange={onUserChange}
+            onAddPhone={onAddPhone}
+            onSwitchToTherapist={onSwitchToTherapist}
             onLogout={onLogout}
           />
         )}
@@ -238,6 +256,9 @@ function SessionsTab({
   notice,
   onDismissNotice,
   onChat,
+  favorites,
+  onBookWith,
+  onOpenFavorites,
   onFindPsychologist,
   onCancel,
   onReschedule,
@@ -248,6 +269,9 @@ function SessionsTab({
   notice?: string;
   onDismissNotice: () => void;
   onChat: (psychologistId: string) => void;
+  favorites: string[];
+  onBookWith: (psy: Psychologist) => void;
+  onOpenFavorites: () => void;
   onFindPsychologist: () => void;
   onCancel: (booking: Booking) => Promise<void>;
   onReschedule: (booking: Booking) => void;
@@ -266,6 +290,15 @@ function SessionsTab({
     };
   }, [bookings]);
 
+  /** «Свой» психолог — к кому была последняя оплаченная запись. */
+  const mine = useMemo(() => {
+    const last = [...bookings]
+      .filter((b) => b.status === "paid")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    return last ? psychologists.find((p) => p.id === last.psychologistId) : undefined;
+  }, [bookings]);
+  const favoriteList = psychologists.filter((p) => favorites.includes(p.id) && p.id !== mine?.id);
+
   return (
     <>
       <h2>Мои сессии</h2>
@@ -281,6 +314,23 @@ function SessionsTab({
           </button>
         </div>
       )}
+
+      <div className="book-block">
+        {mine ? (
+          <>
+            <button className="btn" onClick={() => onBookWith(mine)}>
+              Записаться к {dative(mine)}
+            </button>
+            <button className="btn secondary" onClick={onFindPsychologist}>
+              Другой психолог
+            </button>
+          </>
+        ) : (
+          <button className="btn" onClick={onFindPsychologist}>
+            Подобрать психолога
+          </button>
+        )}
+      </div>
 
       <div className="queue-title">Ближайшие</div>
       {upcoming.length === 0 && (
@@ -363,9 +413,30 @@ function SessionsTab({
         </>
       )}
 
-      <button className="btn mt-auto" onClick={onFindPsychologist}>
-        Подобрать психолога
-      </button>
+      <div className="header queue-title" style={{ marginBottom: 8 }}>
+        <span>Избранные психологи</span>
+        <button className="link-btn" onClick={onOpenFavorites}>
+          Каталог →
+        </button>
+      </div>
+      {favoriteList.length === 0 ? (
+        <p className="hint">Отмечайте ♡ в каталоге — здесь появится ваша подборка любимых.</p>
+      ) : (
+        <div className="fav-strip">
+          {favoriteList.map((psy) => (
+            <div key={psy.id} className="fav-card">
+              <Avatar name={psy.name} src={psy.photo} size="small" />
+              <strong>{psy.name}</strong>
+              <span className="hint">{formatMoney(psy.price)}</span>
+              <button className="btn secondary small" onClick={() => onBookWith(psy)}>
+                Записаться
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <MoodDiary user={user} />
     </>
   );
 }
@@ -456,14 +527,30 @@ function ProfileTab({
   quiz,
   onEditQuiz,
   onUserChange,
+  onAddPhone,
+  onSwitchToTherapist,
   onLogout,
 }: {
   user: User;
   quiz: Quiz | null;
   onEditQuiz: () => void;
   onUserChange: (user: User) => void;
+  onAddPhone: () => void;
+  onSwitchToTherapist: () => void;
   onLogout: () => void;
 }) {
+  const code = api.referralCode(user);
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   const [name, setName] = useState(user.name ?? "");
   const [email, setEmail] = useState(user.email ?? "");
   const [saved, setSaved] = useState(false);
@@ -510,8 +597,45 @@ function ProfileTab({
         </div>
       </form>
 
-      <div className="queue-title">Способ входа</div>
-      <div className="card static">{userLabel(user)}</div>
+      {user.ownerPsychologistId && (
+        <div className="notice">
+          <span className="grow">
+            Это ваш клиентский аккаунт: коллеги видят вас как обычного клиента.
+          </span>
+          <button className="btn small" onClick={onSwitchToTherapist}>
+            Кабинет психолога
+          </button>
+        </div>
+      )}
+
+      <div className="queue-title">Вход и телефон</div>
+      <div className="card static">
+        <div>{userLabel(user)}</div>
+        {user.phone ? (
+          <div className="hint">Телефон +7 {user.phone} подтверждён</div>
+        ) : (
+          <div className="header" style={{ marginTop: 8, marginBottom: 0 }}>
+            <span className="hint">Телефон не привязан — без него не восстановить доступ</span>
+            <button className="btn secondary small" onClick={onAddPhone}>
+              Добавить
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="queue-title">Пригласить друга</div>
+      <div className="card static referral">
+        <p style={{ marginBottom: 10 }}>
+          Другу — скидка <strong>1 000 ₽</strong> на первую сессию, вам —{" "}
+          <strong>500 ₽</strong> на баланс, когда он её пройдёт.
+        </p>
+        <div className="header" style={{ marginBottom: 0 }}>
+          <code className="promo">{code}</code>
+          <button className="btn secondary small" onClick={copy}>
+            {copied ? "Скопировано" : "Скопировать"}
+          </button>
+        </div>
+      </div>
 
       <div className="queue-title">Анкета</div>
       <div className="card static">
@@ -537,4 +661,66 @@ function ProfileTab({
       </button>
     </>
   );
+}
+
+const MOOD_LABELS = ["Очень плохо", "Плохо", "Нормально", "Хорошо", "Отлично"];
+
+/** Дневник состояния: отметка за день и график последних двух недель. */
+function MoodDiary({ user }: { user: User }) {
+  const [entries, setEntries] = useState<MoodEntry[]>([]);
+  const today = new Date().toISOString().slice(0, 10);
+
+  useEffect(() => {
+    let active = true;
+    api.moods(user.id).then((list) => {
+      if (active) setEntries(list);
+    });
+    return () => {
+      active = false;
+    };
+  }, [user.id]);
+
+  const todayValue = entries.find((e) => e.date === today)?.value;
+  const recent = entries.slice(-14);
+
+  return (
+    <>
+      <div className="queue-title">Дневник состояния</div>
+      <div className="card static">
+        <div className="hint" style={{ marginBottom: 8 }}>
+          Как вы сегодня? Психолог увидит динамику перед сессией.
+        </div>
+        <div className="mood-scale" role="radiogroup" aria-label="Самочувствие сегодня">
+          {MOOD_LABELS.map((label, i) => (
+            <button
+              key={label}
+              className={todayValue === i + 1 ? "on" : ""}
+              aria-label={label}
+              title={label}
+              onClick={async () => setEntries(await api.saveMood(user.id, i + 1))}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+        {recent.length > 0 && (
+          <div className="mood-chart" aria-label="Динамика за последние дни">
+            {recent.map((e) => (
+              <span key={e.date} title={`${formatDay(e.date)}: ${MOOD_LABELS[e.value - 1]}`}>
+                <i style={{ height: `${e.value * 20}%` }} className={e.date === today ? "now" : ""} />
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Имя в дательном падеже для «Записаться к …»: Анне, Тимуру, Алексею, Айгерим. */
+function dative(psy: Psychologist): string {
+  const name = psy.name.split(" ")[0];
+  if (psy.gender === "female") return /[ая]$/.test(name) ? `${name.slice(0, -1)}е` : name;
+  if (name.endsWith("й")) return `${name.slice(0, -1)}ю`;
+  return `${name}у`;
 }

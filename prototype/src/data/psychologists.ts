@@ -1,14 +1,36 @@
-import type { Psychologist } from "../types";
+import type { Psychologist, Review } from "../types";
 
-export const TOPICS = [
-  "Тревога и страхи",
-  "Апатия и выгорание",
-  "Отношения",
-  "Самооценка",
-  "Карьера",
-  "Кризис / Переезд",
-  "Просто что-то не так",
+/** Ответ, при котором темы не учитываются в подборе. */
+export const UNSURE = "Затрудняюсь ответить";
+
+/** Темы анкеты по группам, как в действующей анкете сервиса; диагнозы отдельно. */
+export const TOPIC_GROUPS: { title: string; topics: string[] }[] = [
+  {
+    title: "Состояние",
+    topics: [
+      "Тревога и страхи",
+      "Апатия и выгорание",
+      "Стресс и усталость",
+      "Панические атаки",
+      "Нарушения сна",
+      "Самооценка",
+    ],
+  },
+  {
+    title: "Отношения",
+    topics: ["Отношения в паре", "Семья и родители", "Дети и воспитание", "Одиночество"],
+  },
+  {
+    title: "Жизненные события",
+    topics: ["Кризис / Переезд", "Карьера", "Утрата и горе", "Беременность и роды"],
+  },
+  {
+    title: "Диагноз, если он есть",
+    topics: ["Депрессия", "ПТСР", "ОКР", "РПП", "СДВГ"],
+  },
 ];
+
+export const TOPICS = TOPIC_GROUPS.flatMap((g) => g.topics);
 
 export const psychologists: Psychologist[] = [
   {
@@ -19,7 +41,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 8,
     price: 3500,
     method: "КПТ, гештальт",
-    topics: ["Тревога и страхи", "Апатия и выгорание", "Самооценка"],
+    education: "МГУ, клиническая психология; Институт КПТ",
+    about: "Помогаю справляться с тревогой и выгоранием, возвращать опору и силы.",
+    topics: ["Тревога и страхи", "Апатия и выгорание", "Самооценка", "Панические атаки", "Депрессия"],
     languages: ["ru"],
     formats: ["individual"],
     slots: ["evening"],
@@ -37,7 +61,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 12,
     price: 4000,
     method: "Психоанализ",
-    topics: ["Тревога и страхи", "Отношения", "Кризис / Переезд"],
+    education: "КазНУ им. аль-Фараби; Европейская конфедерация психоанализа",
+    about: "Работаю с отношениями и кризисами, бережно и в глубину.",
+    topics: ["Тревога и страхи", "Отношения в паре", "Кризис / Переезд", "Утрата и горе", "Семья и родители"],
     languages: ["ru", "kz"],
     formats: ["individual", "couple"],
     slots: ["morning"],
@@ -55,7 +81,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 9,
     price: 3200,
     method: "КПТ",
-    topics: ["Карьера", "Апатия и выгорание", "Самооценка"],
+    education: "НИУ ВШЭ, психология; сертификат Beck Institute",
+    about: "Карьера, выгорание, самооценка — конкретные шаги и домашние задания.",
+    topics: ["Карьера", "Апатия и выгорание", "Самооценка", "Стресс и усталость", "СДВГ"],
     languages: ["ru", "kz"],
     formats: ["individual"],
     slots: ["evening", "afternoon"],
@@ -73,7 +101,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 6,
     price: 3800,
     method: "Схема-терапия",
-    topics: ["Отношения", "Самооценка", "Кризис / Переезд"],
+    education: "Boğaziçi University; ISST, схема-терапия",
+    about: "Помогаю разобраться в повторяющихся сценариях в отношениях.",
+    topics: ["Отношения в паре", "Самооценка", "Кризис / Переезд", "Одиночество"],
     languages: ["tr", "ru"],
     formats: ["individual", "couple"],
     slots: ["evening", "morning"],
@@ -91,7 +121,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 10,
     price: 3600,
     method: "Системная терапия",
-    topics: ["Отношения", "Просто что-то не так", "Тревога и страхи"],
+    education: "ТГУ им. Джавахишвили; МИСТ, семейная терапия",
+    about: "Семьи, пары и подростки: ищем, как договориться всем вместе.",
+    topics: ["Отношения в паре", "Семья и родители", "Дети и воспитание", "Тревога и страхи"],
     languages: ["ru"],
     formats: ["couple", "teen", "individual"],
     slots: ["evening", "afternoon"],
@@ -109,7 +141,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 15,
     price: 4500,
     method: "Интегративный подход",
-    topics: ["Карьера", "Кризис / Переезд", "Просто что-то не так"],
+    education: "СПбГУ, медицинская психология; кандидат психологических наук",
+    about: "Кризисы середины жизни, утраты и большие перемены.",
+    topics: ["Карьера", "Кризис / Переезд", "Утрата и горе", "Депрессия", "ПТСР"],
     languages: ["ru"],
     formats: ["individual"],
     slots: ["morning", "afternoon", "evening"],
@@ -127,7 +161,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 7,
     price: 3300,
     method: "КПТ",
-    topics: ["Тревога и страхи", "Апатия и выгорание", "Карьера"],
+    education: "ЕНУ им. Гумилёва; Институт КПТ, Москва",
+    about: "Тревога, паника и стресс на работе — работаем быстро и по шагам.",
+    topics: ["Тревога и страхи", "Апатия и выгорание", "Карьера", "Панические атаки", "Нарушения сна"],
     languages: ["ru", "kz"],
     formats: ["individual"],
     slots: ["morning", "afternoon"],
@@ -145,7 +181,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 11,
     price: 3700,
     method: "Гештальт-терапия",
-    topics: ["Отношения", "Кризис / Переезд", "Самооценка"],
+    education: "Ankara University; Гештальт-институт, Стамбул",
+    about: "Отношения, переезды и поиск себя в новой стране.",
+    topics: ["Отношения в паре", "Кризис / Переезд", "Самооценка", "Одиночество"],
     languages: ["tr", "ru"],
     formats: ["individual", "couple"],
     slots: ["evening"],
@@ -163,7 +201,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 15,
     price: 4200,
     method: "Системная семейная терапия",
-    topics: ["Отношения", "Просто что-то не так", "Кризис / Переезд"],
+    education: "КазНПУ им. Абая; МИСТ, системная семейная терапия",
+    about: "Семьи с детьми и подростками, беременность и первые годы родительства.",
+    topics: ["Семья и родители", "Дети и воспитание", "Беременность и роды", "Отношения в паре"],
     languages: ["ru"],
     formats: ["couple", "teen", "individual"],
     slots: ["afternoon"],
@@ -181,7 +221,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 6,
     price: 3000,
     method: "Эмоционально-фокусированная",
-    topics: ["Самооценка", "Тревога и страхи", "Отношения"],
+    education: "КарГУ им. Букетова; ICEEFT, ЭФТ",
+    about: "Самооценка, тревога и отношения у подростков и взрослых.",
+    topics: ["Самооценка", "Тревога и страхи", "Отношения в паре", "Дети и воспитание", "РПП"],
     languages: ["kz", "ru"],
     formats: ["teen", "individual"],
     slots: ["afternoon", "evening"],
@@ -199,7 +241,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 12,
     price: 3900,
     method: "КПТ",
-    topics: ["Тревога и страхи", "Отношения", "Апатия и выгорание"],
+    education: "НГУ, психология; Beck Institute, КПТ депрессии",
+    about: "Депрессия, ОКР и тревога — доказательные методы и понятный план.",
+    topics: ["Тревога и страхи", "Апатия и выгорание", "Депрессия", "ОКР", "Нарушения сна"],
     languages: ["ru"],
     formats: ["individual"],
     slots: ["evening"],
@@ -217,7 +261,9 @@ export const psychologists: Psychologist[] = [
     experienceYears: 4,
     price: 2800,
     method: "ACT",
-    topics: ["Карьера", "Самооценка", "Кризис / Переезд"],
+    education: "НУУз им. Улугбека; курс ACT, ACBS",
+    about: "Карьера, самооценка и переезд: учимся действовать, а не застревать.",
+    topics: ["Карьера", "Самооценка", "Кризис / Переезд", "Стресс и усталость"],
     languages: ["ru"],
     formats: ["individual"],
     slots: ["morning", "afternoon"],
@@ -228,3 +274,18 @@ export const psychologists: Psychologist[] = [
     photo: "",
   },
 ];
+
+const REVIEW_POOL: Review[] = [
+  { author: "Мария, 29", rating: 5, text: "С первой встречи стало спокойнее: появился план, что делать с тревогой." },
+  { author: "Ерлан, 34", rating: 5, text: "Без давления и оценок. За два месяца вернулся сон и силы на работу." },
+  { author: "Анонимно", rating: 5, text: "Очень бережно. Наконец смогла говорить о том, что давно держала в себе." },
+  { author: "Дана, 41", rating: 4, text: "Понравились практичные задания между сессиями, хоть иногда было непросто." },
+  { author: "Анонимно", rating: 5, text: "Помог разобраться с выгоранием и перестать работать по ночам." },
+  { author: "Сауле, 26", rating: 5, text: "Чувствую, что меня слышат. Записалась ещё на месяц вперёд." },
+];
+
+/** Два последних отзыва психолога (в прототипе — из общего набора). */
+export function reviewsFor(psy: Psychologist): Review[] {
+  const start = psychologists.findIndex((p) => p.id === psy.id);
+  return [0, 1].map((i) => REVIEW_POOL[(start * 2 + i) % REVIEW_POOL.length]);
+}

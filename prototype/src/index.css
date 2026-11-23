@@ -1244,3 +1244,485 @@ p {
     width: min(420px, 100%);
   }
 }
+
+/* --- Правки по созвону 20.11 --- */
+
+/* Анкета: варианты листаются по горизонтали, одним пальцем */
+.option-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 -22px 6px;
+  padding: 0 22px 4px;
+}
+
+.option-row .choice {
+  flex: none;
+  width: auto;
+  margin-bottom: 0;
+  padding: 12px 16px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.story {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.story textarea {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  resize: vertical;
+  min-height: 76px;
+  line-height: 1.4;
+}
+
+.story textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.notice.guess {
+  align-items: flex-start;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+/* Карточка психолога */
+.psy-card .rating {
+  font-size: 13px;
+  color: #9a6b12;
+  margin-top: 2px;
+}
+
+.fav {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--muted);
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fav.on {
+  color: #c0392b;
+  border-color: #f0c7c2;
+  background: #fdf1ef;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.badges .badge {
+  margin-right: 0;
+}
+
+.psy-more {
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.psy-more p {
+  margin-bottom: 10px;
+  color: var(--ink);
+}
+
+.review {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  background: #f8f5ef;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.review-stars {
+  display: block;
+  color: #b07d1a;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.review cite {
+  display: block;
+  margin-top: 4px;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.compare-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.compare-check input {
+  accent-color: var(--accent);
+}
+
+/* Каталог: фильтры, сравнение */
+.filters {
+  padding-bottom: 8px;
+}
+
+.filter .chips {
+  margin: 6px 0 12px;
+}
+
+.compare-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px -22px -24px;
+  padding: 12px 22px;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.compare-scroll {
+  overflow-x: auto;
+  margin: 0 -22px;
+  padding: 0 22px;
+}
+
+.compare {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 13px;
+}
+
+.compare th,
+.compare td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  min-width: 110px;
+}
+
+.compare thead th {
+  border-bottom: 0;
+}
+
+.compare thead th span {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.compare tbody th {
+  color: var(--muted);
+  font-weight: 500;
+  min-width: 84px;
+}
+
+.compare td.best {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+/* Горящие окна */
+.hot-title {
+  color: #b4441c;
+}
+
+.hot-price {
+  color: #b4441c;
+}
+
+.hot-strip,
+.fav-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 -22px 6px;
+  padding: 0 22px 6px;
+}
+
+.hot-card,
+.fav-card {
+  flex: none;
+  width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 16px;
+  background: #fff6f0;
+  border: 1px solid #f1d2bf;
+}
+
+.hot-card .btn {
+  margin-top: auto;
+}
+
+.fav-card {
+  width: 150px;
+  background: white;
+  border-color: var(--line);
+}
+
+.fav-card strong {
+  font-size: 14px;
+}
+
+.hour.hot {
+  border-color: #f1d2bf;
+  background: #fff6f0;
+}
+
+.hour small {
+  display: block;
+  font-size: 11px;
+  color: #b4441c;
+}
+
+.hour.on small {
+  color: inherit;
+}
+
+.hot-note {
+  font-size: 13px;
+  color: #8a3a17;
+  background: #fff6f0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.see-all {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 16px;
+  margin: 6px 0 0;
+  border: 1px dashed var(--accent);
+  border-radius: 16px;
+  background: #f3f7f5;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+/* Кабинет клиента */
+.book-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.mood-scale {
+  display: flex;
+  gap: 6px;
+}
+
+.mood-scale button {
+  flex: 1;
+  padding: 10px 0;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mood-scale button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.mood-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 64px;
+  margin-top: 12px;
+  padding-top: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mood-chart span {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.mood-chart i {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: #b9d2c7;
+}
+
+.mood-chart i.now {
+  background: var(--accent);
+}
+
+.promo {
+  font: 600 15px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.06em;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f3f7f5;
+  color: var(--accent);
+}
+
+/* Видеокомната: собеседник на весь экран, панели поверх видео */
+.room-full {
+  position: relative;
+  padding: 0;
+  gap: 0;
+  min-height: 0;
+}
+
+.room-full > .room-stage {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  min-height: 0;
+}
+
+.room-full .room-top,
+.room-full .room-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  padding: 16px 14px;
+}
+
+.room-full .room-top {
+  top: 0;
+  background: linear-gradient(rgba(18, 26, 23, 0.85), transparent);
+}
+
+.room-full .room-bottom {
+  bottom: 0;
+  flex-wrap: wrap;
+  background: linear-gradient(transparent, rgba(18, 26, 23, 0.9));
+}
+
+.room-full .room-banner {
+  top: 58px;
+}
+
+.room-full .room-pip.top-right {
+  top: 58px;
+  right: 12px;
+  bottom: auto;
+}
+
+.room-full .room-pip.bottom-right {
+  bottom: 82px;
+  right: 12px;
+}
+
+.room-full .room-pip.bottom-left {
+  bottom: 82px;
+  left: 12px;
+  right: auto;
+}
+
+.room-stage.split {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  place-items: stretch;
+}
+
+.room-stage.split > .room-center {
+  justify-content: center;
+}
+
+.room-self {
+  display: grid;
+  place-items: center;
+  background: #2a3a34;
+  border-top: 1px solid #3b5048;
+  color: #b8c6bf;
+  font-size: 13px;
+}
+
+.room-settings {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 78px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(29, 42, 37, 0.97);
+  border: 1px solid #3b5048;
+}
+
+.room-settings .room-toggle {
+  justify-content: flex-start;
+  color: #eef3f0;
+}
+
+.room-seg {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.room-seg button {
+  border: 1px solid #3b5048;
+  background: transparent;
+  color: #eef3f0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.room-seg button.on {
+  background: #eef3f0;
+  color: #121a17;
+}
+
+.room-btn.active {
+  background: #eef3f0;
+  color: #121a17;
+}
+
+.back {
+  align-self: flex-start;
+}
+
+.filter .chips.scroll-x {
+  flex-wrap: wrap;
+  overflow: visible;
+  margin: 6px 0 12px;
+  padding: 0;
+}
+
+.room-btn svg {
+  display: block;
+}
