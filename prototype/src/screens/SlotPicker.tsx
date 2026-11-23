@@ -3,9 +3,12 @@ import { api } from "../api/client";
 import {
   HOURS_BY_PART,
   PART_LABELS,
+  HOT_DISCOUNT,
   bookingDays,
   freeHours,
+  isHot,
   slotAt,
+  slotPrice,
 } from "../lib/availability";
 import { formatMoney } from "../lib/labels";
 import { Avatar } from "../components/Avatar";
@@ -13,9 +16,9 @@ import type { Psychologist, Slot, TimeOfDay } from "../types";
 
 type Props = {
   psy: Psychologist;
-  /** Время суток из анкеты — подсвечиваем как «удобно вам». */
-  preferred: TimeOfDay[];
   title: string;
+  /** Показывать цену и скидку за горящие окна (при переносе не нужно). */
+  showPrice?: boolean;
   actionLabel: string;
   /** Текущее время записи при переносе: его не предлагаем. */
   current?: string;
@@ -29,8 +32,8 @@ const PARTS: TimeOfDay[] = ["morning", "afternoon", "evening"];
 /** Выбор даты и часа у конкретного психолога. Показывает только свободные окна. */
 export function SlotPicker({
   psy,
-  preferred,
   title,
+  showPrice = true,
   actionLabel,
   current,
   error,
@@ -64,16 +67,12 @@ export function SlotPicker({
     }));
   }, [psy, taken, current, schedule]);
 
-  // Открываем первый день, где есть окно в удобное по анкете время.
+  // Открываем первый день, где есть свободные окна.
   useEffect(() => {
     if (days.length === 0) return;
-    const fit = days.findIndex((d) =>
-      d.hours.some((h) => preferred.some((p) => HOURS_BY_PART[p].includes(h))),
-    );
-    const any = days.findIndex((d) => d.hours.length > 0);
-    setDayIndex(fit >= 0 ? fit : Math.max(any, 0));
+    setDayIndex(Math.max(days.findIndex((d) => d.hours.length > 0), 0));
     setHour(null);
-  }, [days, preferred]);
+  }, [days]);
 
   const day = days[dayIndex];
   const slot = day && hour !== null ? slotAt(day.date, hour) : null;
@@ -135,29 +134,31 @@ export function SlotPicker({
                 })}
               </div>
               {day.hours.length === 0 && <p>В этот день свободных окон нет.</p>}
+              {showPrice && day.hours.some((h) => isHot(slotAt(day.date, h).startsAt)) && (
+                <div className="hot-note">
+                  Горящие окна: до сессии меньше 48 часов, скидка {HOT_DISCOUNT * 100}%
+                </div>
+              )}
               {PARTS.map((part) => {
                 const hours = day.hours.filter((h) => HOURS_BY_PART[part].includes(h));
                 if (hours.length === 0) return null;
                 return (
                   <div key={part} className="hours-group">
-                    <div className="hint">
-                      {PART_LABELS[part]}
-                      {preferred.includes(part) && (
-                        <span className="badge paid" style={{ marginLeft: 8 }}>
-                          удобно по анкете
-                        </span>
-                      )}
-                    </div>
+                    <div className="hint">{PART_LABELS[part]}</div>
                     <div className="hours">
-                      {hours.map((h) => (
-                        <button
-                          key={h}
-                          className={`hour ${hour === h ? "on" : ""}`}
-                          onClick={() => setHour(h)}
-                        >
-                          {String(h).padStart(2, "0")}:00
-                        </button>
-                      ))}
+                      {hours.map((h) => {
+                        const hot = showPrice && isHot(slotAt(day.date, h).startsAt);
+                        return (
+                          <button
+                            key={h}
+                            className={`hour ${hour === h ? "on" : ""} ${hot ? "hot" : ""}`}
+                            onClick={() => setHour(h)}
+                          >
+                            {String(h).padStart(2, "0")}:00
+                            {hot && <small>−{HOT_DISCOUNT * 100}%</small>}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -171,6 +172,14 @@ export function SlotPicker({
       <div className="pick-summary mt-auto">
         <span className="hint">
           {slot ? slot.label : "Выберите дату и время"}
+          {slot && showPrice && (
+            <>
+              {" · "}
+              <strong className={isHot(slot.startsAt) ? "hot-price" : ""}>
+                {formatMoney(slotPrice(psy.price, slot.startsAt))}
+              </strong>
+            </>
+          )}
         </span>
         <button className="btn" disabled={!slot} onClick={() => slot && onPick(slot)}>
           {actionLabel}

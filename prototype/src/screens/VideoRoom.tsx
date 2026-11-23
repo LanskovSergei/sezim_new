@@ -1,7 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Booking, Psychologist } from "../types";
 
 type Stage = "check" | "waiting" | "call" | "ended";
+/** Где показывать своё видео, если клиент его включил. */
+type Pip = "top-right" | "bottom-right" | "bottom-left";
+
+const PIP_OPTIONS: [Pip, string][] = [
+  ["top-right", "Справа вверху"],
+  ["bottom-right", "Справа внизу"],
+  ["bottom-left", "Слева внизу"],
+];
 
 type Props = {
   booking: Booking;
@@ -30,6 +38,20 @@ export function VideoRoom({ booking, psy, role, peerName, onExit, onRate }: Prop
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [rating, setRating] = useState(0);
+  // По умолчанию собеседник на весь экран, себя не видно: так легче не отвлекаться.
+  const [showSelf, setShowSelf] = useState(false);
+  const [pip, setPip] = useState<Pip>("top-right");
+  const [split, setSplit] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const roomRef = useRef<HTMLDivElement>(null);
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => undefined);
+    } else {
+      roomRef.current?.requestFullscreen?.().catch(() => undefined);
+    }
+  }
 
   // Проверки связи «проходят» по очереди.
   useEffect(() => {
@@ -108,7 +130,8 @@ export function VideoRoom({ booking, psy, role, peerName, onExit, onRate }: Prop
           ))}
         </div>
         <p className="hint">
-          Сессия не записывается, связь зашифрована. В прототипе комната открыта сразу; в
+          В комнате собеседник будет на весь экран, а своё видео по умолчанию скрыто — его
+          можно включить кнопкой «Вид». Сессия не записывается, связь зашифрована. В прототипе комната открыта сразу; в
           продукте — за 10 минут до начала.
         </p>
         <button className="btn mt-auto" disabled={!ready} onClick={() => setStage("waiting")}>
@@ -167,8 +190,10 @@ export function VideoRoom({ booking, psy, role, peerName, onExit, onRate }: Prop
     );
   }
 
+  const self = <span>{cam ? "Вы" : "Камера выкл."}</span>;
+
   return (
-    <div className="room room-full">
+    <div className="room room-full" ref={roomRef}>
       <div className="room-top">
         <strong>{peerName}</strong>
         <span className="room-meta">
@@ -181,7 +206,7 @@ export function VideoRoom({ booking, psy, role, peerName, onExit, onRate }: Prop
           </span>
         </span>
       </div>
-      <div className="room-stage">
+      <div className={`room-stage ${split && stage === "call" ? "split" : ""}`}>
         {stage === "waiting" && (
           <div className="room-center">
             <span className="room-avatar">{peerInitials}</span>
@@ -208,21 +233,59 @@ export function VideoRoom({ booking, psy, role, peerName, onExit, onRate }: Prop
         {stage === "call" && !poorNetwork && (
           <div className="room-center">
             <span className="room-avatar big">{peerInitials}</span>
-            <span className="room-hint">Видео собеседника</span>
+            <span className="room-hint">Видео собеседника на весь экран</span>
           </div>
         )}
-        <div className="room-pip">{cam ? "Вы" : "Камера выкл."}</div>
+        {stage === "call" && split && <div className="room-self">{self}</div>}
+        {!split && showSelf && <div className={`room-pip ${pip}`}>{self}</div>}
       </div>
-      <label className="room-toggle">
-        <input
-          type="checkbox"
-          checked={poorNetwork}
-          onChange={(e) => setPoorNetwork(e.target.checked)}
-        />
-        Имитировать плохую сеть
-      </label>
+      {settings && (
+        <div className="room-settings" role="dialog" aria-label="Вид">
+          <label className="room-toggle">
+            <input
+              type="checkbox"
+              checked={showSelf}
+              onChange={(e) => setShowSelf(e.target.checked)}
+            />
+            Показывать моё видео
+          </label>
+          {showSelf && !split && (
+            <div className="room-seg" role="group" aria-label="Где показывать">
+              {PIP_OPTIONS.map(([id, label]) => (
+                <button key={id} className={pip === id ? "on" : ""} onClick={() => setPip(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          <label className="room-toggle">
+            <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} />
+            Разделить экран пополам
+          </label>
+          <label className="room-toggle">
+            <input
+              type="checkbox"
+              checked={poorNetwork}
+              onChange={(e) => setPoorNetwork(e.target.checked)}
+            />
+            Имитировать плохую сеть (для показа)
+          </label>
+        </div>
+      )}
       <div className="room-bottom">
         {controls}
+        <button
+          className={`room-btn ${settings ? "active" : ""}`}
+          aria-expanded={settings}
+          onClick={() => setSettings(!settings)}
+        >
+          Вид
+        </button>
+        <button className="room-btn" onClick={toggleFullscreen} aria-label="Полный экран">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+          </svg>
+        </button>
         <button className="room-btn end" onClick={() => setStage("ended")}>
           Завершить
         </button>

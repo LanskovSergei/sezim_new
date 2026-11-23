@@ -2,12 +2,14 @@ import type {
   AuthProvider,
   Booking,
   ChatMessage,
+  MoodEntry,
   ProfilePatch,
   Quiz,
   User,
 } from "../types";
 
-const KEY = "психологи-prototype-v2";
+// v3: анкета без времени и языка, избранное, дневник состояния.
+const KEY = "психологи-prototype-v3";
 
 type Db = {
   users: User[];
@@ -16,6 +18,9 @@ type Db = {
   quizByUser: Record<string, Quiz>;
   /** Недельное расписание психолога: 7 дней (с пн) × часы с 8 до 21. */
   schedules: Record<string, boolean[][]>;
+  /** Избранные психологи; в прототипе общие для браузера, в продукте — у аккаунта. */
+  favorites: string[];
+  moodsByUser: Record<string, MoodEntry[]>;
   lastQuiz: Quiz | null;
   sessionUserId: string | null;
 };
@@ -26,6 +31,8 @@ const empty: Db = {
   messages: [],
   quizByUser: {},
   schedules: {},
+  favorites: [],
+  moodsByUser: {},
   lastQuiz: null,
   sessionUserId: null,
 };
@@ -100,6 +107,45 @@ export const store = {
     const next = { ...current, ...patch };
     write({ ...db, users: db.users.map((u) => (u.id === userId ? next : u)) });
     return next;
+  },
+  /** Номер, подтверждённый один раз после входа через Google/Apple/Telegram. */
+  setUserPhone(userId: string, phone: string): User {
+    const db = read();
+    const current = db.users.find((u) => u.id === userId);
+    if (!current) throw new Error("Пользователь не найден");
+    const next = { ...current, phone };
+    write({ ...db, users: db.users.map((u) => (u.id === userId ? next : u)) });
+    return next;
+  },
+  /** Клиентский субаккаунт психолога: отдельный профиль под теми же данными входа. */
+  subaccountFor(psychologistId: string, name: string): User {
+    const user = store.upsertUser("phone", `sub:${psychologistId}`);
+    if (user.ownerPsychologistId) return user;
+    const db = read();
+    const next: User = { ...user, name, ownerPsychologistId: psychologistId };
+    write({ ...db, users: db.users.map((u) => (u.id === user.id ? next : u)) });
+    return next;
+  },
+  favorites(): string[] {
+    return read().favorites;
+  },
+  toggleFavorite(psychologistId: string): string[] {
+    const db = read();
+    const favorites = db.favorites.includes(psychologistId)
+      ? db.favorites.filter((id) => id !== psychologistId)
+      : [...db.favorites, psychologistId];
+    write({ ...db, favorites });
+    return favorites;
+  },
+  moodsFor(userId: string): MoodEntry[] {
+    return read().moodsByUser[userId] ?? [];
+  },
+  saveMood(userId: string, entry: MoodEntry): MoodEntry[] {
+    const db = read();
+    const list = [...(db.moodsByUser[userId] ?? []).filter((m) => m.date !== entry.date), entry]
+      .sort((a, b) => a.date.localeCompare(b.date));
+    write({ ...db, moodsByUser: { ...db.moodsByUser, [userId]: list } });
+    return list;
   },
   logout() {
     write({ ...read(), sessionUserId: null });

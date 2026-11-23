@@ -7,6 +7,8 @@ import type {
   Booking,
   ChatMessage,
   MatchResult,
+  MoodEntry,
+  OtpChannel,
   PaymentMethod,
   ProfilePatch,
   Psychologist,
@@ -17,6 +19,9 @@ import type {
 
 const OTP = "1111";
 const pending = new Map<string, string>();
+
+/** Порядок доставки кода: от самого дешёвого канала к SMS. */
+const CHANNEL_ORDER: OtpChannel[] = ["whatsapp", "telegram", "sms"];
 
 /** Заглушка ответов психолога: в прототипе на той стороне чата никого нет. */
 const AUTO_REPLIES = [
@@ -53,18 +58,38 @@ function newMessage(
 
 /** Слой, который позже заменяется на fetch('/api/...') */
 export const api = {
-  async requestCode(phone: string): Promise<{ channel: string; hint: string }> {
+  /**
+   * Код подтверждения номера. Сначала пробуем мессенджеры, где у номера есть аккаунт,
+   * потом SMS. after — канал, по которому код не дошёл: берём следующий.
+   */
+  async requestCode(
+    phone: string,
+    after: OtpChannel | null = null,
+  ): Promise<{ channel: OtpChannel; next: OtpChannel | null; hint: string }> {
     pending.set(phone, OTP);
-    const channel = phone.startsWith("998") ? "Telegram" : "SMS / Telegram";
-    return { channel, hint: OTP };
+    const index = after ? CHANNEL_ORDER.indexOf(after) + 1 : 0;
+    const channel = CHANNEL_ORDER[Math.min(index, CHANNEL_ORDER.length - 1)];
+    const next = CHANNEL_ORDER[CHANNEL_ORDER.indexOf(channel) + 1] ?? null;
+    return { channel, next, hint: OTP };
   },
 
+  /** Номер проверяется кодом один раз; дальше вход без кода, по сессии или Google/Apple. */
   async verify(phone: string, code: string): Promise<User> {
     if (pending.get(phone) !== code) {
       throw new Error("Неверный код. Для прототипа используйте 1111");
     }
     pending.delete(phone);
-    return store.upsertUser("phone", phone);
+    const user = store.upsertUser("phone", phone);
+    return user.phone ? user : store.setUserPhone(user.id, phone);
+  },
+
+  /** Привязать номер к аккаунту, созданному через Google/Apple/Telegram. */
+  async attachPhone(userId: string, phone: string, code: string): Promise<User> {
+    if (pending.get(phone) !== code) {
+      throw new Error("Неверный код. Для прототипа используйте 1111");
+    }
+    pending.delete(phone);
+    return store.setUserPhone(userId, phone);
   },
 
   /** Заглушка OAuth: вместо редиректа к провайдеру сразу возвращает демо-аккаунт. */
@@ -178,7 +203,47 @@ export const api = {
     return store.updateBooking(bookingId, { rating });
   },
 
-  /** Заглушка входа психолога: сразу открывает кабинет демо-специалиста. */
+  async favorites(): Promise<string[]> {
+    return store.favorites();
+  },
+
+  async toggleFavorite(psychologistId: string): Promise<string[]> {
+    return store.toggleFavorite(psychologistId);
+  },
+
+  async moods(userId: string): Promise<MoodEntry[]> {
+    return store.moodsFor(userId);
+  },
+
+  async saveMood(userId: string, value: number): Promise<MoodEntry[]> {
+    const date = new Date().toISOString().slice(0, 10);
+    return store.saveMood(userId, { date, value });
+  },
+
+  /** Режим показа: дневник за прошлую неделю, чтобы был виден график. */
+  async seedDemoMoods(userId: string): Promise<void> {
+    const values = [2, 2, 3, 2, 3, 4];
+    values.forEach((value, i) => {
+      const day = new Date();
+      day.setDate(day.getDate() - (values.length - i));
+      store.saveMood(userId, { date: day.toISOString().slice(0, 10), value });
+    });
+  },
+
+  /** Промокод друга: другу скидка на первую сессию, приглашающему — бонус на баланс. */
+  referralCode(user: User): string {
+    return `DRUG-${user.id.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+  },
+
+  /** Клиентский аккаунт психолога: открывается из его кабинета, вход тот же. */
+  async clientAccountFor(psy: Psychologist): Promise<User> {
+    return store.subaccountFor(psy.id, psy.name);
+  },
+
+  /**
+   * Вход психолога. Сам зарегистрироваться психологом нельзя — только по приглашению
+   * платформы; в прототипе любой непустой код открывает демо-кабинет.
+   */
   async loginAsPsychologist(): Promise<Psychologist> {
     const psy = psychologists.find((p) => p.id === DEMO_PSYCHOLOGIST_ID);
     if (!psy) throw new Error("Демо-психолог не найден");

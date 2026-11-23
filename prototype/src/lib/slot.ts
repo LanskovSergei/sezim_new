@@ -1,24 +1,29 @@
-import { bookingDays, freeHours, partOfHour, slotAt } from "./availability";
-import type { Psychologist, Quiz, Slot } from "../types";
+import { bookingDays, freeHours, isHot, slotAt } from "./availability";
+import type { Psychologist, Slot } from "../types";
 
-/**
- * Ближайшее свободное окно психолога: сначала в то время суток,
- * которое выбрано в анкете, иначе любое.
- */
+/** Ближайшее свободное окно психолога. */
 export function nearestSlot(
   psy: Psychologist,
-  quiz: Quiz,
   taken: Set<string>,
   schedule: boolean[][] | null = null,
   now = new Date(),
 ): Slot | null {
-  let fallback: Slot | null = null;
   for (const day of bookingDays(psy, now)) {
-    for (const hour of freeHours(psy, day, taken, schedule, now)) {
-      const slot = slotAt(day, hour);
-      if (quiz.times.includes(partOfHour(hour))) return slot;
-      fallback ??= slot;
-    }
+    const hours = freeHours(psy, day, taken, schedule, now);
+    if (hours.length > 0) return slotAt(day, hours[0]);
   }
-  return fallback;
+  return null;
+}
+
+/** Горящие окна психолога: свободные в ближайшие 48 часов. */
+export function hotSlots(
+  psy: Psychologist,
+  taken: Set<string>,
+  schedule: boolean[][] | null = null,
+  now = new Date(),
+): Slot[] {
+  return bookingDays(psy, now)
+    .slice(0, 3)
+    .flatMap((day) => freeHours(psy, day, taken, schedule, now).map((h) => slotAt(day, h)))
+    .filter((slot) => isHot(slot.startsAt, now));
 }

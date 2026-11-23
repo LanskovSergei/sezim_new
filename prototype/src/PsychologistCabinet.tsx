@@ -13,6 +13,8 @@ type Props = {
   psy: Psychologist;
   onLogout: () => void;
   onEnterRoom: (booking: Booking, peerName: string) => void;
+  /** Открыть клиентский субаккаунт, чтобы самому пройти терапию у коллег. */
+  onClientAccount: () => void;
 };
 
 /** Комиссия платформы, доля от цены сессии. */
@@ -100,7 +102,7 @@ function clientName(users: User[], userId: string): string {
   return user.name || userLabel(user);
 }
 
-export function PsychologistCabinet({ psy, onLogout, onEnterRoom }: Props) {
+export function PsychologistCabinet({ psy, onLogout, onEnterRoom, onClientAccount }: Props) {
   const [tab, setTab] = useState<Tab>("today");
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -167,6 +169,7 @@ export function PsychologistCabinet({ psy, onLogout, onEnterRoom }: Props) {
               setTab("chats");
             }}
             onLogout={onLogout}
+            onClientAccount={onClientAccount}
           />
         )}
         {tab === "schedule" && <ScheduleTab psy={psy} />}
@@ -236,6 +239,7 @@ function TodayTab({
   onEnterRoom,
   onChat,
   onLogout,
+  onClientAccount,
 }: {
   psy: Psychologist;
   bookings: Booking[];
@@ -243,6 +247,7 @@ function TodayTab({
   onEnterRoom: (booking: Booking, peerName: string) => void;
   onChat: (userId: string) => void;
   onLogout: () => void;
+  onClientAccount: () => void;
 }) {
   const now = Date.now();
   const tomorrow = addDays(startOfDay(new Date()), 1).getTime();
@@ -331,6 +336,17 @@ function TodayTab({
           </div>
         </div>
       ))}
+
+      <div className="queue-title">Терапия для себя</div>
+      <div className="card static">
+        <p style={{ marginBottom: 10 }}>
+          Клиентский аккаунт — отдельный профиль под тем же входом. Коллеги видят вас как
+          обычного клиента, записи и чаты не смешиваются с рабочими.
+        </p>
+        <button className="btn secondary small" onClick={onClientAccount}>
+          Перейти в клиентский аккаунт
+        </button>
+      </div>
     </>
   );
 }
